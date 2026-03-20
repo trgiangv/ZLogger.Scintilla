@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".gitignore" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="ZLogger.Scintilla.Benchmarks/ZLogger.Scintilla.Benchmarks.csproj" />
+  <Project Path="ZLogger.Scintilla.Demo/ZLogger.Scintilla.Demo.csproj" />
+  <Project Path="ZLogger.Scintilla.Tests/ZLogger.Scintilla.Tests.csproj" />
+  <Project Path="ZLogger.Scintilla.Wpf.Demo/ZLogger.Scintilla.Wpf.Demo.csproj" />
+  <Project Path="ZLogger.Scintilla/ZLogger.Scintilla.csproj" />
+</Solution>

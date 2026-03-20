@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+    <Target Name="ILRepacker" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+        <ItemGroup>
+            <InputAssemblies Include="$(TargetPath)"/>
+            <InputAssemblies Include="$(TargetDir)LookupEngine.dll" Condition="Exists('$(TargetDir)LookupEngine.dll')"/>
+            <InputAssemblies Include="$(TargetDir)LookupEngine.Abstractions.dll" Condition="Exists('$(TargetDir)LookupEngine.Abstractions.dll')"/>
+        </ItemGroup>
+
+        <ILRepack
+            Internalize="false"
+            AllowDuplicateResources="false"
+            DebugInfo="true"
+            InputAssemblies="@(InputAssemblies)"
+            LibraryPath="$(TargetDir)"
+            OutputFile="$(TargetPath)"
+            Parallel="true"
+            TargetKind="SameAsPrimaryAssembly"/>
+
+        <Delete Files="$(TargetDir)LookupEngine.dll" Condition="Exists('$(TargetDir)LookupEngine.dll')"/>
+        <Delete Files="$(TargetDir)LookupEngine.Abstractions.dll" Condition="Exists('$(TargetDir)LookupEngine.Abstractions.dll')"/>
+        <Delete Files="$(TargetDir)LookupEngine.pdb" Condition="Exists('$(TargetDir)LookupEngine.pdb')"/>
+        <Delete Files="$(TargetDir)LookupEngine.Abstractions.pdb" Condition="Exists('$(TargetDir)LookupEngine.Abstractions.pdb')"/>
+    </Target>
+
+</Project>

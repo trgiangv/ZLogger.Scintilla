@@ -1,0 +1,4 @@
+[submodule "external/LookupEngine"]
+	path = external/LookupEngine
+	url = https://github.com/lookup-foundation/LookupEngine.git
+	branch = main

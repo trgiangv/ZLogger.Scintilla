@@ -52,3 +52,16 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Ide
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+
+# BenchmarkDotNet artifacts
+BenchmarkDotNet.Artifacts/
+
+# Local git worktrees
+.worktrees/

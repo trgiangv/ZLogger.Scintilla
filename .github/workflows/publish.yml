@@ -1,0 +1,31 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - run: dotnet restore ZLogger.Scintilla/ZLogger.Scintilla.csproj
+
+      - run: dotnet build ZLogger.Scintilla/ZLogger.Scintilla.csproj -c Release --no-restore
+
+      - run: dotnet pack ZLogger.Scintilla/ZLogger.Scintilla.csproj -c Release --no-build -o nupkg
+
+      - name: Push to NuGet
+        shell: pwsh
+        run: |
+          $pkg = Get-ChildItem -Path nupkg -Filter *.nupkg | Select-Object -First 1
+          dotnet nuget push $pkg.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
