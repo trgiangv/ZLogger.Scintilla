@@ -143,49 +143,6 @@ public sealed class EnumerableSerializationTests
         Assert.DoesNotContain("[{", messageText);
     }
 
-    /// <summary>
-    /// Regression: user's <c>configureZLogger</c> callback called <c>UsePlainTextFormatter</c>
-    /// which overrode <see cref="ScintillaLogFormatter"/>, causing ZLogger's auto-serialize
-    /// for <see cref="System.Collections.IEnumerable"/> to leak through.
-    /// Fix: <see cref="ScintillaLogFormatter"/> is applied AFTER user callback.
-    /// </summary>
-    [Fact]
-    public void Processor_UserConfigOverridesFormatter_ScintillaFormatterStillWins()
-    {
-        LogEntry? captured = null;
-        var options = new ZLoggerOptions();
-        options.UsePlainTextFormatter(f =>
-            f.SetPrefixFormatter(
-                $"[{0:local-timeonly} {1:short}] ",
-                (in MessageTemplate t, in LogInfo i) => t.Format(i.Timestamp, i.LogLevel)));
-        options.UseFormatter(static () => new ScintillaLogFormatter());
-
-        var processor = new ScintillaLogProcessor(options, entry =>
-        {
-            captured = entry;
-            return true;
-        });
-
-        using var factory = LoggerFactory.Create(builder =>
-        {
-            builder.SetMinimumLevel(LogLevel.Trace);
-            builder.AddZLoggerLogProcessor(processor);
-        });
-
-        var logger = factory.CreateLogger("Test");
-        var ids = new List<FakeElementId> { new(1001), new(1002), new(1003) };
-        logger.ZLogInformation($"Selected: {ids}");
-
-        factory.Dispose();
-
-        Assert.NotNull(captured);
-        var messageText = GetMessageText(captured);
-
-        Assert.False(
-            messageText.Contains("IntegerValue"),
-            $"ScintillaLogFormatter should override PlainTextFormatter.\nActual: [{messageText}]");
-    }
-
     private sealed class FakeElementId
     {
         public FakeElementId(int v) { IntegerValue = v; }
@@ -197,9 +154,7 @@ public sealed class EnumerableSerializationTests
     private static LogEntry CaptureLogEntry(Action<ILogger> logAction)
     {
         LogEntry? captured = null;
-        var options = new ZLoggerOptions();
-        options.UseFormatter(static () => new ScintillaLogFormatter());
-        var processor = new ScintillaLogProcessor(options, entry =>
+        var processor = new ScintillaLogProcessor(entry =>
         {
             captured = entry;
             return true;

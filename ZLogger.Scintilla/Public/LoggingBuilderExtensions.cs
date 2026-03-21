@@ -2,7 +2,7 @@ using System;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Pipeline;
-using ZLogger.Scintilla.Rendering;
+// ReSharper disable ConvertToExtensionBlock
 namespace ZLogger.Scintilla.Public;
 
 /// <summary>
@@ -20,11 +20,10 @@ public static class LoggingBuilderExtensions
     /// </summary>
     public static ILoggingBuilder AddZLoggerScintillaWinForms(
         this ILoggingBuilder builder,
-        Action<ScintillaOptions>? configure = null,
-        Action<ZLoggerOptions>? configureZLogger = null)
+        Action<ScintillaOptions>? configure = null)
     {
         var viewer = new ScintillaLogViewer(configure);
-        return RegisterViewer(builder, viewer, configureZLogger);
+        return RegisterViewer(builder, viewer);
     }
 
     /// <summary>
@@ -35,16 +34,14 @@ public static class LoggingBuilderExtensions
     /// </summary>
     public static ILoggingBuilder AddZLoggerScintillaWpf(
         this ILoggingBuilder builder,
-        Action<ScintillaOptions>? configure = null,
-        Action<ZLoggerOptions>? configureZLogger = null)
+        Action<ScintillaOptions>? configure = null)
     {
         var viewer = new ScintillaLogViewerWpf(configure);
-        return RegisterViewer(builder, viewer, configureZLogger);
+        return RegisterViewer(builder, viewer);
     }
 
     private static ILoggingBuilder RegisterViewer<TViewer>(
-        ILoggingBuilder builder, TViewer viewer,
-        Action<ZLoggerOptions>? configureZLogger)
+        ILoggingBuilder builder, TViewer viewer)
         where TViewer : ScintillaLogViewerBase
     {
         if (builder is null) throw new ArgumentNullException(nameof(builder));
@@ -52,12 +49,9 @@ public static class LoggingBuilderExtensions
         builder.Services.TryAddSingleton(viewer);
         builder.Services.TryAddSingleton<ScintillaLogViewerBase>(viewer);
 
-        builder.AddZLoggerLogProcessor((zloggerOptions, _) =>
+        builder.AddZLoggerLogProcessor((_, _) =>
         {
-            configureZLogger?.Invoke(zloggerOptions);
-            zloggerOptions.UseFormatter(static () => new ScintillaLogFormatter());
-
-            var processor = new ScintillaLogProcessor(zloggerOptions, viewer.TryPost);
+            var processor = new ScintillaLogProcessor(viewer.TryPost);
             viewer.AttachProcessor(processor);
             return processor;
         });

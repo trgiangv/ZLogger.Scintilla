@@ -26,17 +26,7 @@ public partial class App : System.Windows.Application
                 .History(maxEntries: 50_000)
                 .SetTheme(ScintillaThemes.Dark)
                 .WithColorized(new DemoRevitColorizer())
-                .WithLinkify(new DemoRevitLinkifier()),
-            z =>
-            {
-                z.IncludeScopes = true;
-                z.UsePlainTextFormatter(formatter =>
-                {
-                    formatter.SetPrefixFormatter(
-                        $"[{0:local-timeonly} {1:short}] ",
-                        (in template, in info) => template.Format(info.Timestamp, info.LogLevel));
-                });
-            });
+                .WithLinkify(new DemoRevitLinkifier()));
 
         _host = builder.Build();
         var mainWindow = _host.Services.GetRequiredService<MainWindow>();

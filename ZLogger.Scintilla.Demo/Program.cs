@@ -32,15 +32,7 @@ internal static class Program
                 .History(maxEntries: 50_000)
                 .SetTheme(ScintillaThemes.Dark)
                 .WithColorized(new DemoRevitColorizer())
-                .WithLinkify(new DemoRevitLinkifier()),
-            z =>
-            {
-                z.IncludeScopes = true;
-                z.UsePlainTextFormatter(f =>
-                    f.SetPrefixFormatter(
-                        $"[{0:local-timeonly} {1:short}] ",
-                        (in t, in i) => t.Format(i.Timestamp, i.LogLevel)));
-            });
+                .WithLinkify(new DemoRevitLinkifier()));
 
         using var host = builder.Build();
         var mainForm = host.Services.GetRequiredService<MainForm>();

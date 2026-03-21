@@ -30,16 +30,13 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         EnableRedirection = false
     };
 
-    private readonly ZLoggerOptions _options;
-    private readonly IZLoggerFormatter _formatter;
+    private readonly IZLoggerFormatter _formatter = new Rendering.ScintillaLogFormatter();
     private readonly Func<LogEntry, bool> _tryPost;
     private int _disposed;
     private volatile bool _prettyJsonEnabled;
 
-    internal ScintillaLogProcessor(ZLoggerOptions options, Func<LogEntry, bool> tryPost)
+    internal ScintillaLogProcessor(Func<LogEntry, bool> tryPost)
     {
-        _options = options ?? throw new ArgumentNullException(nameof(options));
-        _formatter = options.CreateFormatter();
         _tryPost = tryPost ?? throw new ArgumentNullException(nameof(tryPost));
     }
 
@@ -96,9 +93,9 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
             if (!_tryPost(logEntry))
                 logEntry.ReleaseBuffer();
         }
-        catch (Exception ex)
+        catch
         {
-            _options.InternalErrorLogger?.Invoke(ex);
+            // ignored
         }
         finally
         {
@@ -165,7 +162,7 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         }
     }
 
-    private const int MaxDecomposeDepth = 2;
+    private const int MaxDecomposeDepth = 3;
 
     private static void WriteDecomposedJson(Utf8JsonWriter writer, DecomposedObject decomposed, int depth = 0)
     {
@@ -188,31 +185,29 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
 
         if (raw is null)
         {
-            writer.WriteNullValue();
-            return;
+            writer.WriteNullValue(); return;
+        }
+        if (depth >= MaxDecomposeDepth || ParameterSpan.IsLeafType(raw.GetType()))
+        {
+            WriteJsonValue(writer, raw); return;
+        }
+        if (raw is System.Collections.IEnumerable enumerable)
+        {
+            WriteEnumerable(writer, enumerable, depth); return;
         }
 
-        if (depth < MaxDecomposeDepth)
+        try
         {
-            if (!ParameterSpan.IsLeafType(raw.GetType()))
+            var child = LookupComposer.Decompose(raw, LogDecomposeOptions);
+            if (child.Members.Count > 0)
             {
-                if (raw is System.Collections.IEnumerable enumerable)
-                {
-                    WriteEnumerable(writer, enumerable, depth);
-                    return;
-                }
-
-                try
-                {
-                    var child = LookupComposer.Decompose(raw, LogDecomposeOptions);
-                    if (child.Members.Count > 0)
-                    {
-                        WriteDecomposedJson(writer, child, depth + 1);
-                        return;
-                    }
-                }
-                catch { /* fall through to WriteJsonValue */ }
+                WriteDecomposedJson(writer, child, depth + 1);
+                return;
             }
+        }
+        catch
+        {
+            // ignored
         }
 
         WriteJsonValue(writer, raw);
@@ -225,48 +220,36 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         foreach (var item in enumerable)
         {
             if (count++ >= 50) break;
-            if (item is null)
-            {
-                writer.WriteNullValue();
-                continue;
-            }
-
-            if (ParameterSpan.IsLeafType(item.GetType()))
-            {
-                WriteJsonValue(writer, item);
-                continue;
-            }
-
-            try
-            {
-                var child = LookupComposer.Decompose(item, LogDecomposeOptions);
-                WriteDecomposedJson(writer, child, depth + 1);
-            }
-            catch
-            {
-                WriteJsonValue(writer, item);
-            }
+            WriteElementValue(writer, item, depth);
         }
         writer.WriteEndArray();
     }
 
+    private static void WriteElementValue(Utf8JsonWriter writer, object? item, int depth)
+    {
+        if (item is null) { writer.WriteNullValue(); return; }
+        if (ParameterSpan.IsLeafType(item.GetType())) { WriteJsonValue(writer, item); return; }
+
+        try
+        {
+            var child = LookupComposer.Decompose(item, LogDecomposeOptions);
+            WriteDecomposedJson(writer, child, depth + 1);
+        }
+        catch
+        {
+            WriteJsonValue(writer, item);
+        }
+    }
+
     private static void WriteJsonValue(Utf8JsonWriter writer, object value)
     {
-        switch (value)
+        try
         {
-            case bool b:    writer.WriteBooleanValue(b); break;
-            case int i:     writer.WriteNumberValue(i); break;
-            case long l:    writer.WriteNumberValue(l); break;
-            case double d:  writer.WriteNumberValue(d); break;
-            case float f:   writer.WriteNumberValue(f); break;
-            case decimal m: writer.WriteNumberValue(m); break;
-            case short s:   writer.WriteNumberValue(s); break;
-            case byte bt:   writer.WriteNumberValue(bt); break;
-            case uint ui:   writer.WriteNumberValue(ui); break;
-            case ulong ul:  writer.WriteNumberValue(ul); break;
-            case ushort us: writer.WriteNumberValue(us); break;
-            case sbyte sb:  writer.WriteNumberValue(sb); break;
-            default:        writer.WriteStringValue(value.ToString()); break;
+            JsonSerializer.Serialize(writer, value, value.GetType());
+        }
+        catch
+        {
+            writer.WriteStringValue(value.ToString());
         }
     }
 
@@ -347,36 +330,35 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
 
         for (var i = 0; i < paramCount; i++)
         {
-            var value = entry.GetParameterValue(i);
-            if (value is null)
-                continue;
-
-            string? formatted;
-            try { formatted = value.ToString(); }
-            catch { formatted = null; }
-
-            if (string.IsNullOrEmpty(formatted))
-                continue;
-
-            var type = value.GetType();
+            if (!TryCreateSpan(entry.GetParameterValue(i), out var span)) continue;
             result ??= new ParameterSpan[paramCount];
-            result[count++] = new ParameterSpan
-            {
-                FormattedValue = formatted!,
-                SemanticStyle = ParameterSpan.MapClrType(type),
-                ClrType = type
-            };
+            result[count++] = span;
         }
 
-        if (result is null)
-            return null;
-
-        if (count == result.Length)
-            return result;
+        if (result is null) return null;
+        if (count == result.Length) return result;
 
         var trimmed = new ParameterSpan[count];
         Array.Copy(result, trimmed, count);
         return trimmed;
     }
 
+    private static bool TryCreateSpan(object? value, out ParameterSpan span)
+    {
+        span = default;
+        if (value is null) return false;
+
+        var formatted = value.ToString();
+
+        if (string.IsNullOrEmpty(formatted)) return false;
+
+        var type = value.GetType();
+        span = new ParameterSpan
+        {
+            FormattedValue = formatted,
+            SemanticStyle = ParameterSpan.MapClrType(type),
+            ClrType = type
+        };
+        return true;
+    }
 }
