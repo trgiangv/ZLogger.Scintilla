@@ -93,7 +93,7 @@ sequenceDiagram
     participant UI as UI Thread
 
     App->>Proc: logger.LogInformation(...)
-    Proc->>Proc: Format UTF-8 prefix<br/>Extract ParameterSpans<br/>Build JSON bytes (if enabled)
+    Proc->>Proc: Format UTF-8 prefix [HH:mm:ss LVL]<br/>Extract ParameterSpans<br/>Build JSON bytes (if EnablePrettyJson)
     Proc->>Chan: TryPost(LogEntry)
 
     loop Every 75ms (FlushIntervalMs)
@@ -289,11 +289,11 @@ ZLogger.Scintilla/
 | File | Role |
 |------|------|
 | `LogRenderer` | Orchestrator: `BuildSegments`, `BuildJsonSegments`, `ApplyThemeStyles` |
-| `ScintillaLogFormatter` | `IZLoggerFormatter`: `[HH:mm:ss.fff LVL] [Cat] {msg}` |
+| `ScintillaLogFormatter` | `IZLoggerFormatter`: `[HH:mm:ss LVL] [Cat] {msg}` (configurable timestamp) |
 | `DisplayValueFormatter` | Parameter span styling + linkifier/colorizer per token |
 | `JsonSyntaxHighlighter` | JSON syntax coloring (no serialization) |
 | `TokenResolutionEngine` | Try `ILinkifier` then `ILogColorizer` per token |
-| `LogPrefixParser` | Parse `[HH:mm:ss.fff LVL] [Cat]` prefix |
+| `LogPrefixParser` | Parse `[HH:mm:ss LVL] [Cat]` prefix |
 | `UrlScanner` | URL/email detection + linkification |
 | `RenderingChars` | Shared char sets and classification helpers |
 | `RenderTokenWriter` | Segment writer helper |
@@ -308,6 +308,41 @@ ZLogger.Scintilla/
 | `ScintillaInteractionService` | Click/hover → invoke link `Action` |
 | `StyleMapper` | `RenderSegment[]` → `StyleRange[]` |
 | `NativeWindowsHelper` | Win32 dark mode |
+
+---
+
+## Clear / Memory Release
+
+When `Clear()` is called on the viewer, the pipeline performs a full memory release across all layers:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Base as ScintillaLogViewerBase
+    participant Hist as LogHistoryBuffer
+    participant Queue as ConcurrentQueue
+    participant Doc as ScintillaDocument
+    participant Native as Native Scintilla
+
+    User->>Base: Clear()
+    Base->>Hist: drain + ReleaseBuffer() each entry
+    Base->>Queue: DrainAndDiscardRenderQueue()
+    Note over Queue: ReleaseEntryBuffers() → ArrayPool<byte>
+    Base->>Doc: Clear()
+    Doc->>Native: CreateDocument() → new empty doc
+    Doc->>Native: ReleaseDocument(oldDoc) → frees native gap buffer
+    Note over Doc: _tokenRanges.Clear() + TrimExcess()
+    Note over Doc: Re-apply WrapMode, ReadOnly, undo settings
+```
+
+**Why document swap instead of `ClearAll()`:**
+
+| Approach | Native buffer freed? | Managed `LineCollection` reset? |
+|----------|---------------------|--------------------------------|
+| `SCI_CLEARALL` | No — capacity retained | No — `GapBuffer<PerLine>` keeps allocated size |
+| Document swap (`CreateDocument` + `ReleaseDocument`) | **Yes** | **Yes** — new document starts minimal |
+
+The document swap is the only way to guarantee both native and managed memory are fully released. Essential per-control settings (`WrapMode`, `ReadOnly`, undo collection) are re-applied after the swap because they are stored on the control, not the document.
 
 ---
 
