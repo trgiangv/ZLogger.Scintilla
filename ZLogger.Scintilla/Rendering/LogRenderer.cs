@@ -19,7 +19,7 @@ internal sealed class LogRenderer
     private readonly JsonSyntaxHighlighter _jsonHighlighter = new();
     private readonly DisplayValueFormatter _displayFormatter;
 
-    public LogRenderer()
+    internal LogRenderer()
         : this(LogConstants.DefaultFontFamily, LogConstants.DefaultFontSize)
     {
     }
@@ -60,8 +60,28 @@ internal sealed class LogRenderer
         scintilla.Styles[ScintillaNET.Style.LineNumber].ForeColor = theme.SecondaryText;
         scintilla.Styles[ScintillaNET.Style.LineNumber].BackColor = theme.Background;
 
+        ApplySelectionStyles(scintilla, theme);
         ApplyLogLevelStyles(scintilla, theme);
         ApplySemanticStyles(scintilla, theme);
+    }
+    
+    private static readonly Color DarkSelectionBackColor = Color.FromArgb(60, 80, 120);
+    private static readonly Color DarkCaretColor = Color.FromArgb(220, 220, 220);
+    private static readonly Color LightSelectionBackColor = Color.FromArgb(173, 214, 255);
+    private static readonly Color LightCaretColor = Color.FromArgb(30, 30, 30);
+
+    private static void ApplySelectionStyles(ScintillaNET.Scintilla scintilla, IScintillaTheme theme)
+    {
+        if (theme.IsDark)
+        {
+            scintilla.SelectionBackColor = DarkSelectionBackColor;
+            scintilla.CaretForeColor = DarkCaretColor;
+        }
+        else
+        {
+            scintilla.SelectionBackColor = LightSelectionBackColor;
+            scintilla.CaretForeColor = LightCaretColor;
+        }
     }
 
     private static void ApplyLogLevelStyles(ScintillaNET.Scintilla scintilla, IScintillaTheme theme)

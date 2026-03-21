@@ -21,7 +21,7 @@ internal sealed class MainForm : Form
     private readonly Button _clearButton = new() { Text = "Clear", Width = 80 };
     private readonly Button _emitSamplesButton = new() { Text = "Emit Samples", Width = 110 };
 
-    private readonly TextBox _searchTextBox = new() { Width = 240, PlaceholderText = "Search..." };
+    private readonly TextBox _searchTextBox = new() { Width = 240 };
     private readonly CheckBox _regexCheckBox = new() { AutoSize = true, Text = "Regex" };
     private readonly Button _findNextButton = new() { Text = "Find Next", Width = 100 };
     private readonly Button _findPreviousButton = new() { Text = "Find Previous", Width = 110 };
@@ -263,6 +263,24 @@ internal sealed class MainForm : Form
         };
         _logger.ZLogInformation($"API config loaded: {apiConfig}");
 
+        _logger.ZLogInformation($"=== IEnumerable PARAMETER TESTS ===");
+        
+        
+        var ids = new List<ElementId> { new ElementId(1001), new ElementId(1002), new ElementId(1003) };
+        _logger.ZLogInformation($"Selected element IDs: {ids}");
+
+        var names = new[] { "Wall", "Floor", "Roof", "Column", "Beam" };
+        _logger.ZLogInformation($"Category names: {names}");
+
+        var mixed = new List<string> { "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta" };
+        _logger.ZLogWarning($"Large collection (truncated by pretty-json): {mixed}");
+
+        var points = new List<object> { new { X = 1.5, Y = 2.3 }, new { X = 4.0, Y = 5.1 } };
+        _logger.ZLogDebug($"Geometry points: {points}");
+
+        var empty = new List<string>();
+        _logger.ZLogInformation($"Empty collection: {empty}");
+
         _logger.ZLogDebug($"=== EXCEPTION TEST ===");
         try
         {
@@ -470,8 +488,8 @@ internal sealed class MainForm : Form
 
     private async Task WaitForBacklogDrainedAsync(int timeoutMs)
     {
-        var started = Environment.TickCount64;
-        while (Environment.TickCount64 - started < timeoutMs)
+        var started = Environment.TickCount;
+        while (unchecked(Environment.TickCount - started) < timeoutMs)
         {
             if (_viewer.PendingEntryCount <= 0)
             {

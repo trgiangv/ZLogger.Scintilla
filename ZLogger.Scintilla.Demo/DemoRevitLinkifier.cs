@@ -18,7 +18,7 @@ public sealed class DemoRevitLinkifier : ILinkifier
         if (utf8Token.IsEmpty)
             return false;
 
-        var token = Encoding.UTF8.GetString(utf8Token).Trim();
+        var token = Encoding.UTF8.GetString(utf8Token.ToArray()).Trim();
         if (string.IsNullOrEmpty(token))
             return false;
 

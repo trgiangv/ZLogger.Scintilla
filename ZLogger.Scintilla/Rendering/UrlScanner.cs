@@ -6,12 +6,9 @@ namespace ZLogger.Scintilla.Rendering;
 
 /// <summary>
 /// Detects URLs and email addresses in text spans, and emits styled render segments.
-/// Combines URL detection and segment emission (previously split between UrlScanner and UrlSegmentHelper).
 /// </summary>
-internal sealed class UrlScanner
+internal static class UrlScanner
 {
-    private readonly List<(int Start, int Length)> _matchBuffer = new(LogConstants.UrlMatchBufferCapacity);
-
     public static bool HasPotentialCandidate(ReadOnlySpan<char> text)
     {
         foreach (var ch in text)
@@ -64,39 +61,6 @@ internal sealed class UrlScanner
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// Scans a standalone string for URLs. Emits link segments for URLs; gaps keep
-    /// <paramref name="defaultStyle"/> but URLs within JSON strings preserve the caller's style
-    /// (only the clickable hotspot is set, not the color).
-    /// </summary>
-    public void AppendUrlAwareContent(
-        string content,
-        SemanticStyle defaultStyle,
-        RenderTokenWriter writer)
-    {
-        if (string.IsNullOrEmpty(content))
-            return;
-
-        if (!HasPotentialCandidate(content.AsSpan()) || FindAll(content.AsSpan(), _matchBuffer) == 0)
-        {
-            writer.Add(content, defaultStyle);
-            return;
-        }
-
-        var cursor = 0;
-        foreach (var match in _matchBuffer)
-        {
-            if (match.Start > cursor)
-                writer.Add(content, cursor, match.Start - cursor, defaultStyle);
-
-            EmitUrlOrFallback(content, match.Start, match.Length, defaultStyle, writer, preserveStyle: true);
-            cursor = match.Start + match.Length;
-        }
-
-        if (cursor < content.Length)
-            writer.Add(content, cursor, content.Length - cursor, defaultStyle);
     }
 
     internal static void EmitUrlOrFallback(

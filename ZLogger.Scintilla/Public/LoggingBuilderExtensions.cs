@@ -54,8 +54,8 @@ public static class LoggingBuilderExtensions
 
         builder.AddZLoggerLogProcessor((zloggerOptions, _) =>
         {
-            zloggerOptions.UseFormatter(static () => new ScintillaLogFormatter());
             configureZLogger?.Invoke(zloggerOptions);
+            zloggerOptions.UseFormatter(static () => new ScintillaLogFormatter());
 
             var processor = new ScintillaLogProcessor(zloggerOptions, viewer.TryPost);
             viewer.AttachProcessor(processor);

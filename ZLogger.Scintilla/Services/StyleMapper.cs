@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Services;
@@ -33,7 +32,6 @@ internal static class StyleMapper
 
     private static readonly int[] SemanticLookup = BuildSemanticLookup();
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int ToStyleId(this LogLevel level) => level switch
     {
         LogLevel.Trace       => TraceStyleId,
@@ -45,7 +43,6 @@ internal static class StyleMapper
         _                    => InformationStyleId
     };
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int ToStyleId(this SemanticStyle style)
     {
         var index = (int)style;

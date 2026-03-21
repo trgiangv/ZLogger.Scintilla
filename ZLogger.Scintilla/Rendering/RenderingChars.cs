@@ -9,14 +9,7 @@ internal static class RenderingChars
 {
     public const string TokenSeparators = " \t\r\n,;:=()[]{}<>\"'|/\\";
 
-    public static bool IsTokenSeparator(char ch)
-    {
-        return ch is ' ' or '\t' or '\r' or '\n'
-            or ',' or ';' or ':' or '='
-            or '(' or ')' or '[' or ']'
-            or '{' or '}' or '<' or '>'
-            or '"' or '\'' or '|' or '/' or '\\';
-    }
+    public static bool IsTokenSeparator(char ch) => TokenSeparators.IndexOf(ch) >= 0;
 
     public static bool IsJsonPunctuation(char ch) => ch is '{' or '}' or '[' or ']' or ',' or ':';
 

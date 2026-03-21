@@ -7,7 +7,7 @@ namespace ZLogger.Scintilla.Rendering;
 /// <summary>
 /// Applies JSON syntax highlighting to already-formatted JSON text.
 /// Does NOT perform serialization or pretty-printing — those are handled
-/// by ZLogger's <c>SystemTextJsonZLoggerFormatter</c> at the processor level.
+/// by <see cref="Pipeline.ScintillaLogProcessor"/> via LookupEngine decomposition.
 /// </summary>
 internal sealed class JsonSyntaxHighlighter
 {

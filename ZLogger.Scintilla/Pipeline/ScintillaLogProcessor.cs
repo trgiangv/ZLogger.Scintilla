@@ -1,7 +1,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -48,6 +47,12 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
 
     public void Post(IZLoggerEntry log)
     {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            log.Return();
+            return;
+        }
+
         try
         {
             ParameterSpan[]? paramSpans = null;
@@ -131,7 +136,7 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
             buffer.WrittenSpan.CopyTo(result);
             return result;
         }
-        catch
+        catch (Exception)
         {
             return null;
         }
@@ -179,40 +184,38 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
 
     private static void WriteDecomposedValue(Utf8JsonWriter writer, DecomposedValue dv, int depth)
     {
-        if (depth < MaxDecomposeDepth && TryWriteRecursiveDecompose(writer, dv, depth))
-            return;
-
-        WritePrimitiveValue(writer, dv.Name);
-    }
-
-    private static bool TryWriteRecursiveDecompose(Utf8JsonWriter writer, DecomposedValue dv, int depth)
-    {
         var raw = dv.RawValue;
+
         if (raw is null)
-            return false;
-
-        if (ParameterSpan.IsLeafType(raw.GetType()))
-            return false;
-
-        if (raw is System.Collections.IEnumerable enumerable)
         {
-            WriteEnumerable(writer, enumerable, depth);
-            return true;
+            writer.WriteNullValue();
+            return;
         }
 
-        try
+        if (depth < MaxDecomposeDepth)
         {
-            var child = LookupComposer.Decompose(raw, LogDecomposeOptions);
-            if (child.Members.Count == 0)
-                return false;
+            if (!ParameterSpan.IsLeafType(raw.GetType()))
+            {
+                if (raw is System.Collections.IEnumerable enumerable)
+                {
+                    WriteEnumerable(writer, enumerable, depth);
+                    return;
+                }
 
-            WriteDecomposedJson(writer, child, depth + 1);
-            return true;
+                try
+                {
+                    var child = LookupComposer.Decompose(raw, LogDecomposeOptions);
+                    if (child.Members.Count > 0)
+                    {
+                        WriteDecomposedJson(writer, child, depth + 1);
+                        return;
+                    }
+                }
+                catch { /* fall through to WriteJsonValue */ }
+            }
         }
-        catch
-        {
-            return false;
-        }
+
+        WriteJsonValue(writer, raw);
     }
 
     private static void WriteEnumerable(Utf8JsonWriter writer, System.Collections.IEnumerable enumerable, int depth)
@@ -230,7 +233,7 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
 
             if (ParameterSpan.IsLeafType(item.GetType()))
             {
-                WritePrimitiveValue(writer, item.ToString() ?? string.Empty);
+                WriteJsonValue(writer, item);
                 continue;
             }
 
@@ -241,62 +244,49 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
             }
             catch
             {
-                WritePrimitiveValue(writer, item.ToString() ?? string.Empty);
+                WriteJsonValue(writer, item);
             }
         }
         writer.WriteEndArray();
     }
 
-    private static void WritePrimitiveValue(Utf8JsonWriter writer, string name)
+    private static void WriteJsonValue(Utf8JsonWriter writer, object value)
     {
-        if (name is "null" or "")
+        switch (value)
         {
-            writer.WriteNullValue();
-            return;
+            case bool b:    writer.WriteBooleanValue(b); break;
+            case int i:     writer.WriteNumberValue(i); break;
+            case long l:    writer.WriteNumberValue(l); break;
+            case double d:  writer.WriteNumberValue(d); break;
+            case float f:   writer.WriteNumberValue(f); break;
+            case decimal m: writer.WriteNumberValue(m); break;
+            case short s:   writer.WriteNumberValue(s); break;
+            case byte bt:   writer.WriteNumberValue(bt); break;
+            case uint ui:   writer.WriteNumberValue(ui); break;
+            case ulong ul:  writer.WriteNumberValue(ul); break;
+            case ushort us: writer.WriteNumberValue(us); break;
+            case sbyte sb:  writer.WriteNumberValue(sb); break;
+            default:        writer.WriteStringValue(value.ToString()); break;
         }
-
-        if (bool.TryParse(name, out var boolVal))
-        {
-            writer.WriteBooleanValue(boolVal);
-            return;
-        }
-
-        if (long.TryParse(name, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var longVal))
-        {
-            writer.WriteNumberValue(longVal);
-            return;
-        }
-
-        if (double.TryParse(name, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var doubleVal))
-        {
-            writer.WriteNumberValue(doubleVal);
-            return;
-        }
-
-        writer.WriteStringValue(name);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ArrayBufferWriter<byte> GetThreadTextBuffer()
     {
         _textBuffer ??= new ArrayBufferWriter<byte>(LogConstants.LogProcessorBufferCapacity);
         return _textBuffer;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ArrayBufferWriter<byte> GetThreadJsonBuffer()
     {
         _jsonBuffer ??= new ArrayBufferWriter<byte>(LogConstants.LogProcessorBufferCapacity);
         return _jsonBuffer;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static byte[] RentArray(int minimumLength)
     {
         return minimumLength <= 0 ? [] : ArrayPool<byte>.Shared.Rent(minimumLength);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void ReleaseArray(byte[] buffer)
     {
         if (buffer.Length == 0)
@@ -388,4 +378,5 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         Array.Copy(result, trimmed, count);
         return trimmed;
     }
+
 }

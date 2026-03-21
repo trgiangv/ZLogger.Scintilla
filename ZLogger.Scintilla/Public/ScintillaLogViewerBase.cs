@@ -532,7 +532,8 @@ public abstract class ScintillaLogViewerBase : IDisposable
         _dispatchInvoke(() =>
         {
             if (!ScintillaControl.IsHandleCreated) return;
-            NativeWindowsHelper.ApplyNativeTheme(ScintillaControl.Handle, _currentTheme.IsDark);
+            NativeWindowsHelper.ApplyScrollbarTheme(ScintillaControl.Handle, _currentTheme.IsDark);
+            NativeWindowsHelper.ApplyContextMenuTheme(_currentTheme.IsDark);
         });
     }
 

@@ -10,7 +10,7 @@ namespace ZLogger.Scintilla.Rendering;
 /// <c>CodeGeneratorUtil.AppendAsJson</c> for <see cref="System.Collections.IEnumerable"/> parameters.
 /// </summary>
 /// <remarks>
-/// Output format: <c>[HH:mm:ss.fff LVL] [Category] {message}</c>.
+/// Output format: <c>[HH:mm:ss LVL] [Category] {message}</c>.
 /// <para>
 /// ZLogger's default <c>entry.ToString(writer)</c> auto-serialises non-<see cref="IFormattable"/>
 /// <see cref="System.Collections.IEnumerable"/> values with <c>JsonSerializer.Serialize</c>
@@ -62,7 +62,7 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         if (ex is not null)
         {
             writer.Write(NewLine);
-            WriteStringUtf8(writer, ex.ToString());
+            WriteSpanUtf8(writer, ex.ToString().AsSpan());
         }
     }
 
@@ -107,7 +107,7 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
 
             if (paramIdx < entry.ParameterCount)
             {
-                WriteStringUtf8(writer, ResolveParameterText(entry, paramIdx));
+                WriteSpanUtf8(writer, ResolveParameterText(entry, paramIdx).AsSpan());
                 paramIdx++;
             }
 
@@ -115,7 +115,6 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         }
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static string ResolveParameterText(IZLoggerEntry entry, int paramIdx)
     {
         try
@@ -133,7 +132,7 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         for (var i = 0; i < entry.ParameterCount; i++)
         {
             if (i > 0) writer.Write(CommaSpace);
-            WriteStringUtf8(writer, ResolveParameterText(entry, i));
+            WriteSpanUtf8(writer, ResolveParameterText(entry, i).AsSpan());
         }
     }
 
@@ -146,22 +145,15 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         writer.Advance(written);
     }
 
-    private static void WriteStringUtf8(IBufferWriter<byte> writer, string text)
-    {
-        WriteSpanUtf8(writer, text.AsSpan());
-    }
-
     private static void WriteTimestamp(IBufferWriter<byte> writer, DateTimeOffset ts)
     {
-        var buf = writer.GetSpan(12);
+        var buf = writer.GetSpan(8);
         WriteTwoDigits(buf, 0, ts.Hour);
         buf[2]  = (byte)':';
         WriteTwoDigits(buf, 3, ts.Minute);
         buf[5]  = (byte)':';
         WriteTwoDigits(buf, 6, ts.Second);
-        buf[8]  = (byte)'.';
-        WriteThreeDigits(buf, 9, ts.Millisecond);
-        writer.Advance(12);
+        writer.Advance(8);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -171,15 +163,6 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         buf[offset + 1] = (byte)('0' + value % 10);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void WriteThreeDigits(Span<byte> buf, int offset, int value)
-    {
-        buf[offset]     = (byte)('0' + value / 100);
-        buf[offset + 1] = (byte)('0' + value / 10 % 10);
-        buf[offset + 2] = (byte)('0' + value % 10);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static ReadOnlySpan<byte> GetLevelAbbreviation(LogLevel level) => level switch
     {
         LogLevel.Trace       => "TRC"u8,

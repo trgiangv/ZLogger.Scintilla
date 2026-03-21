@@ -13,7 +13,12 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+#if NET8_0_OR_GREATER
         ApplicationConfiguration.Initialize();
+#else
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+#endif
 
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton<MainForm>();

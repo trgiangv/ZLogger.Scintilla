@@ -15,12 +15,9 @@ public readonly struct ParameterSpan
 {
     private static readonly HashSet<Type> LeafTypes =
     [
-        typeof(string), typeof(bool),
-        typeof(int), typeof(long), typeof(short), typeof(byte),
-        typeof(uint), typeof(ulong), typeof(ushort), typeof(sbyte),
-        typeof(float), typeof(double), typeof(decimal),
+        typeof(string), typeof(decimal),
         typeof(DateTime), typeof(DateTimeOffset), typeof(TimeSpan),
-        typeof(Guid), typeof(char),
+        typeof(Guid),
         typeof(byte[]), typeof(ReadOnlyMemory<byte>), typeof(ArraySegment<byte>)
     ];
 

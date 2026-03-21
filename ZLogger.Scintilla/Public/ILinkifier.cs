@@ -4,8 +4,7 @@ namespace ZLogger.Scintilla.Public;
 
 /// <summary>
 /// Recognizes a token span and assigns a clickable link action.
-/// Register one or more linkifiers via <c>WithLinkify(...)</c> on the viewer builder.
-/// Linkifier are tried in registration order; first match wins.
+/// Register a linkifier via <c>WithLinkify(...)</c> on the viewer options.
 /// <para>
 /// <b>Thread safety:</b> Implementations <b>must</b> be thread-safe.
 /// <see cref="TryMatch"/> may be called from a background thread.

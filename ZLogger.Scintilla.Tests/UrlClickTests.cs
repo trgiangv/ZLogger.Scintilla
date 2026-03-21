@@ -8,12 +8,24 @@ public sealed class UrlClickTests
     [Fact]
     public void UrlScanner_EmitsTokenPayload_WithOnClick_ForValidUrl()
     {
-        var helper = new UrlScanner();
         var segments = new List<RenderSegment>();
         var writer = new RenderTokenWriter(segments);
+        var matches = new List<(int Start, int Length)>();
 
         const string text = "visit https://example.com for details";
-        helper.AppendUrlAwareContent(text, SemanticStyle.Text, writer);
+        UrlScanner.FindAll(text.AsSpan(), matches);
+        Assert.True(matches.Count > 0);
+
+        var cursor = 0;
+        foreach (var match in matches)
+        {
+            if (match.Start > cursor)
+                writer.Add(text, cursor, match.Start - cursor, SemanticStyle.Text);
+            UrlScanner.EmitUrlOrFallback(text, match.Start, match.Length, SemanticStyle.Text, writer);
+            cursor = match.Start + match.Length;
+        }
+        if (cursor < text.Length)
+            writer.Add(text, cursor, text.Length - cursor, SemanticStyle.Text);
 
         var linkSegment = segments.FirstOrDefault(s => s.IsLink);
         Assert.NotNull(linkSegment.TokenPayload);
@@ -23,12 +35,16 @@ public sealed class UrlClickTests
     [Fact]
     public void UrlScanner_EmitsTokenPayload_WithOnClick_ForHttpsUrl()
     {
-        var helper = new UrlScanner();
         var segments = new List<RenderSegment>();
         var writer = new RenderTokenWriter(segments);
+        var matches = new List<(int Start, int Length)>();
 
         const string text = "https://github.com/user/repo";
-        helper.AppendUrlAwareContent(text, SemanticStyle.Text, writer);
+        UrlScanner.FindAll(text.AsSpan(), matches);
+        Assert.True(matches.Count > 0);
+
+        foreach (var match in matches)
+            UrlScanner.EmitUrlOrFallback(text, match.Start, match.Length, SemanticStyle.Text, writer);
 
         var linkSegment = segments.FirstOrDefault(s => s.IsLink);
         Assert.NotNull(linkSegment.TokenPayload);
@@ -38,25 +54,29 @@ public sealed class UrlClickTests
     [Fact]
     public void UrlScanner_NoLink_ForPlainText()
     {
-        var helper = new UrlScanner();
         var segments = new List<RenderSegment>();
         var writer = new RenderTokenWriter(segments);
 
         const string text = "no url here at all";
-        helper.AppendUrlAwareContent(text, SemanticStyle.Text, writer);
+        Assert.False(UrlScanner.HasPotentialCandidate(text.AsSpan()));
+        writer.Add(text, SemanticStyle.Text);
 
         Assert.DoesNotContain(segments, s => s.IsLink);
     }
 
     [Fact]
-    public void UrlScanner_AppendUrlAwareContent_EmitsLinkPayload_ForJsonStringWithUrl()
+    public void UrlScanner_EmitUrlOrFallback_EmitsLinkPayload_ForJsonStringWithUrl()
     {
-        var helper = new UrlScanner();
         var segments = new List<RenderSegment>();
         var writer = new RenderTokenWriter(segments);
+        var matches = new List<(int Start, int Length)>();
 
         const string content = "see https://docs.example.com/api for reference";
-        helper.AppendUrlAwareContent(content, SemanticStyle.JsonString, writer);
+        UrlScanner.FindAll(content.AsSpan(), matches);
+        Assert.True(matches.Count > 0);
+
+        foreach (var match in matches)
+            UrlScanner.EmitUrlOrFallback(content, match.Start, match.Length, SemanticStyle.JsonString, writer, preserveStyle: true);
 
         var linkSegment = segments.FirstOrDefault(s => s.IsLink);
         Assert.NotNull(linkSegment.TokenPayload);

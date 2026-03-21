@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Rendering;
@@ -40,45 +38,6 @@ internal static class LogPrefixParser
     }
 
     /// <summary>
-    /// Parses the <c>[timestamp LVL] </c> prefix from a UTF-16 string.
-    /// Returns the parse result and the remainder message after the prefix.
-    /// </summary>
-    public static ParsedPrefix TryParse(string message, out string remainderMessage)
-    {
-        remainderMessage = message;
-        if (string.IsNullOrEmpty(message) || message[0] != '[')
-            return ParsedPrefix.NotFound;
-
-        var closeIndex = message.IndexOf("] ", StringComparison.Ordinal);
-        if (closeIndex <= 4)
-            return ParsedPrefix.NotFound;
-
-        var split = -1;
-        for (var i = closeIndex - 1; i >= 1; i--)
-        {
-            if (message[i] != ' ') continue;
-            split = i;
-            break;
-        }
-
-        if (split <= 1 || closeIndex - split != 4)
-            return ParsedPrefix.NotFound;
-
-        var timestampLength = split - 1;
-
-        remainderMessage = closeIndex + 2 < message.Length
-            ? message[(closeIndex + 2)..]
-            : string.Empty;
-
-        var prefixByteLength = GetUtf8ByteCount(message, 0, closeIndex + 2);
-
-        return new ParsedPrefix(
-            prefixByteLength: prefixByteLength,
-            timestampLength: timestampLength,
-            levelByteStart: split + 1);
-    }
-
-    /// <summary>
     /// Builds prefix <see cref="RenderSegment"/>s from a parsed UTF-8 prefix.
     /// </summary>
     public static void BuildPrefixSegments(
@@ -100,26 +59,6 @@ internal static class LogPrefixParser
             segments.Add(new RenderSegment(remainder, SemanticStyle.Text));
     }
 
-    /// <summary>
-    /// Builds prefix <see cref="RenderSegment"/>s from a parsed string prefix.
-    /// </summary>
-    public static void BuildPrefixSegments(
-        ParsedPrefix result,
-        string message,
-        LogLevel fallbackLevel,
-        IList<RenderSegment> segments)
-    {
-        var levelStart = result.LevelByteStart;
-        var levelStyle = levelStart >= 0 && levelStart + 2 < message.Length
-            ? ParseShortLevel((byte)message[levelStart], (byte)message[levelStart + 1], (byte)message[levelStart + 2], fallbackLevel)
-            : GetLevelSemanticStyle(fallbackLevel);
-
-        var timestampByteLength = GetUtf8ByteCount(message, 1, result.TimestampLength);
-        var levelByteLength = GetUtf8ByteCount(message, levelStart, 3);
-
-        BuildPrefixSegmentsCore(timestampByteLength, levelByteLength, levelStyle, segments);
-    }
-
     private static void BuildPrefixSegmentsCore(
         int timestampByteLength,
         int levelByteLength,
@@ -133,7 +72,6 @@ internal static class LogPrefixParser
         segments.Add(new RenderSegment(2, SemanticStyle.Punctuation));
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static SemanticStyle ParseShortLevel(byte b0, byte b1, byte b2, LogLevel fallbackLevel) =>
         (b0, b1, b2) switch
         {
@@ -157,12 +95,4 @@ internal static class LogPrefixParser
         _ => SemanticStyle.LevelInformation
     };
 
-    private static int GetUtf8ByteCount(string source, int start, int length)
-    {
-#if NET6_0_OR_GREATER
-        return Encoding.UTF8.GetByteCount(source.AsSpan(start, length));
-#else
-        return Encoding.UTF8.GetByteCount(source.ToCharArray(), start, length);
-#endif
-    }
 }

@@ -5,5 +5,5 @@ public sealed class ScintillaLogViewer(Action<ScintillaOptions>? configure = nul
 {
     public override object HostElement => ScintillaControl;
 
-    protected override void DisposeHostResources() => ScintillaControl.Dispose();
+    protected override void DisposeHostResources() { }
 }
