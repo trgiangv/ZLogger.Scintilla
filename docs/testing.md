@@ -8,7 +8,7 @@ dotnet test ZLogger.Scintilla.Tests/ -c Release
 
 All tests run headless — no Scintilla control or UI thread required.
 
-**116 tests — 0 failures**
+**~130 tests — 0 failures**
 
 ---
 
@@ -18,6 +18,7 @@ All tests run headless — no Scintilla control or UI thread required.
 flowchart TB
     subgraph Pipeline["Pipeline Tests"]
         Alloc["AllocationBudgetTests<br/>Zero-alloc filter hot path"]
+        Batch["BatchPreparerTests<br/>Text, styles, JSON, tokens"]
         Filter["FilterSemanticsTests<br/>Threshold model"]
         History["LogHistoryBufferTests<br/>Ring buffer + eviction"]
         Conc["ConcurrencyTests<br/>Thread safety"]
@@ -27,7 +28,7 @@ flowchart TB
     subgraph Rendering["Rendering Tests"]
         Render["RenderFormattingTests<br/>JSON highlighting + segments"]
         Prefix["LogPrefixParserTests<br/>Timestamp + level parsing"]
-        Param["ParameterSpanTests<br/>Type mapping + colorization"]
+        Param["ParameterSpanTests<br/>Type mapping + HasParameter"]
         Url["UrlClickTests<br/>URL detection + linkifier"]
     end
 
@@ -49,25 +50,27 @@ flowchart TB
 
 ---
 
-## Test Suite — 15 files
+## Test Suite — 17 files
 
 | File | Coverage Area |
 |------|---------------|
 | `AllocationBudgetTests` | `PreparedBatch` lifecycle, `PooledSegment<T>` return, zero-alloc filter path |
+| `BatchPreparerTests` | `BatchPreparer.Prepare` — text bytes, style ranges, JSON block, token ranges |
 | `FilterSemanticsTests` | `SetFilter(LogLevel)` threshold model, edge cases (Trace=All, None=None) |
 | `LogHistoryBufferTests` | Enqueue, eviction at capacity, `CaptureSnapshot` with filter, cancellation |
 | `ConcurrencyTests` | `_filterVersion` monotonicity under 100 concurrent `SetFilter` calls |
 | `LoggingRegistrationTests` | `ScintillaLogProcessor` uses delegate, decoupled from viewer |
 | `RenderFormattingTests` | `JsonSyntaxHighlighter` styling (keys, numbers, booleans, null, punctuation) |
 | `LogPrefixParserTests` | Prefix parsing `[HH:mm:ss.fff LVL] [Cat]`, level → `SemanticStyle` |
-| `ParameterSpanTests` | `MapClrType`, `IsLeafType`, `HasParameter`, `DisplayValueFormatter` colorization |
+| `ParameterSpanTests` | `MapClrType`, `IsLeafType`, `HasParameter` type-based lookup |
 | `UrlClickTests` | URL detection, `ILinkifier` contract, click action invocation |
 | `HostLifecycleTests` | Double-dispose idempotency, `TryPost` after dispose returns `false` |
 | `AsyncSearchTests` | `FindNextAsync` / `FindPreviousAsync` non-blocking, cancellation |
 | `PublicApiShapeTests` | Exact public member set of `ScintillaLogViewerBase` + 3 interfaces |
-| `DocumentationConsistencyTests` | Docs don't reference deleted types |
-| `SolutionStructureTests` | File/folder organization validation |
+| `DocumentationConsistencyTests` | All docs scanned for stale type/API references |
+| `SolutionStructureTests` | File/folder organization, required docs, minimum file count |
 | `ScenarioDataFactoryTests` | Benchmark data factory seed reproducibility |
+| `TestHelper` | Shared `MakeEntry` factory (not a test class) |
 
 ---
 
@@ -83,7 +86,7 @@ Asserts the exact public member set of `ScintillaLogViewerBase`, `IScintillaThem
 
 ### Documentation Consistency
 
-Scans `docs/architecture.md` and `README.md` for references to deleted types (`LogFilterState`, `LogFilterOptions`, `LogFilterSpec`, etc.) and removed API patterns (`SetFilter(string`). Fails if any stale reference is found.
+Scans all docs (`docs/architecture.md`, `docs/usage.md`, `docs/benchmarks.md`, `docs/testing.md`, `README.md`) for references to deleted types and removed API patterns. Fails if any stale reference is found.
 
 ### Filter Semantics
 

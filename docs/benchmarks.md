@@ -2,7 +2,7 @@
 
 Benchmarks live in `ZLogger.Scintilla.Benchmarks/` and use [BenchmarkDotNet](https://benchmarkdotnet.org/).
 
-**Environment:** Intel Core Ultra 7 265K 3.90GHz · .NET 8.0.25 · Windows 11 25H2
+**Environment:** Intel Core Ultra 7 265K 3.90GHz · .NET 8.0.25 · Windows 11 25H2 · BenchmarkDotNet v0.15.8
 
 ---
 
@@ -11,9 +11,9 @@ Benchmarks live in `ZLogger.Scintilla.Benchmarks/` and use [BenchmarkDotNet](htt
 ```mermaid
 flowchart LR
     subgraph Scintilla["ZLogger.Scintilla"]
-        S1["Enqueue: 2–8× faster"]
-        S2["Memory: 3–13× less"]
-        S3["Search: 32–662K× faster"]
+        S1["Enqueue: 2–10× faster"]
+        S2["Memory: 6–38× less"]
+        S3["Search: 31–664K× faster"]
         S4["Paint: ≈ equivalent"]
     end
 
@@ -40,6 +40,14 @@ dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- --filter *Ingest
 dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- --list flat
 ```
 
+Or use the helper script:
+
+```powershell
+.\ZLogger.Scintilla.Benchmarks\run-benchmarks.ps1 -Suite ingest
+.\ZLogger.Scintilla.Benchmarks\run-benchmarks.ps1 -Suite json
+.\ZLogger.Scintilla.Benchmarks\run-benchmarks.ps1 -Suite all
+```
+
 Results are written to `BenchmarkDotNet.Artifacts/results/`.
 
 ---
@@ -58,7 +66,7 @@ Each group also splits measurements into two phases:
 | Phase | What it measures |
 |-------|-----------------|
 | `*_Enqueue` | Time to push all messages into the pipeline only — no waiting for render. Fair producer-side comparison. |
-| `*_FullPipeline` / `*_Drain` | Time for full cycle: enqueue + render completion. Measures end-to-end latency. |
+| `*_Drain` / `*_Full` | Time for full cycle: enqueue + render completion. Measures end-to-end latency. |
 
 ---
 
@@ -72,6 +80,7 @@ Each group also splits measurements into two phases:
 | `FilterReapplyBenchmark` | `SetFilter(Warning)` reapply from history vs Serilog re-emit | 50k history entries |
 | `PaintBenchmark` | Isolated `WM_PRINTCLIENT` pixel-draw cost | 5k pre-filled lines |
 | `SustainedLoadBenchmark` | Continuous load — enqueue throughput + memory pressure | 100k messages |
+| `JsonPipelineBenchmark` | `EnablePrettyJson` overhead: JSON off vs on for plain and structured messages | 5k messages |
 
 ---
 
@@ -88,7 +97,7 @@ All benchmarks use `ScenarioDataFactory.BuildRealisticMixed()`:
 
 ---
 
-## Results (Intel Core Ultra 7 265K · .NET 8.0.25)
+## Results (v0.0.3 — Intel Core Ultra 7 265K · .NET 8.0.25)
 
 ### IngestThroughputBenchmark — 50k messages, 4 producers
 
@@ -96,10 +105,10 @@ All benchmarks use `ScenarioDataFactory.BuildRealisticMixed()`:
 
 | | Scintilla | Serilog+RTB | Ratio |
 |---|---|---|---|
-| Production enqueue | **5.9 ms** | 12.3 ms | **2.1× faster** |
-| Uncapped enqueue | **6.5 ms** | 19.0 ms | **2.9× faster** |
-| Production alloc | **4.99 MB** | 17.17 MB | **3.4× less** |
-| Uncapped alloc | **4.96 MB** | 30.91 MB | **6.2× less** |
+| Production enqueue | **6.4 ms** | 11.1 ms | **1.7× faster** |
+| Uncapped enqueue | **8.4 ms** | 14.5 ms | **1.7× faster** |
+| Production alloc | **2.73 MB** | 25.33 MB | **9.3× less** |
+| Uncapped alloc | **2.74 MB** | 17.17 MB | **6.3× less** |
 
 `BoundedChannel.TryWrite` (lock-free) vs `ConcurrentCircularBuffer.Add` (lock-based). Allocation difference from `ArrayPool<byte>` vs string boxing.
 
@@ -107,8 +116,8 @@ All benchmarks use `ScenarioDataFactory.BuildRealisticMixed()`:
 
 | | Scintilla | Serilog+RTB |
 |---|---|---|
-| Production drain | 5,007 ms | **60.7 ms** |
-| Uncapped drain | 5,006 ms | **62.7 ms** |
+| Production drain | 5,008 ms | **60.6 ms** |
+| Uncapped drain | 5,008 ms | **65.2 ms** |
 
 Scintilla drain is higher because it renders 50k lines with syntax coloring via async `BeginInvoke`. Serilog appends RTF text synchronously. These are different rendering models — **drain time should not be used for head-to-head comparison**. In production, users see log lines appear progressively in batches, not after a 5-second wait.
 
@@ -120,15 +129,15 @@ Scintilla drain is higher because it renders 50k lines with syntax coloring via 
 
 | | Scintilla | Serilog+RTB | Ratio |
 |---|---|---|---|
-| Production enqueue | **179 μs** | 829 μs | **4.6× faster** |
-| Uncapped enqueue | **190 μs** | 1,091 μs | **5.7× faster** |
-| Allocation | **203 KB** | 703 KB | **3.5× less** |
+| Production enqueue | **116 μs** | 688 μs | **5.9× faster** |
+| Uncapped enqueue | **112 μs** | 1,004 μs | **9.0× faster** |
+| Production alloc | **111 KB** | 704 KB | **6.3× less** |
 
 #### Full pipeline allocation
 
 | | Scintilla | Serilog+RTB | Ratio |
 |---|---|---|---|
-| Production full alloc | **268 KB** | 8,767 KB | **32.7× less** |
+| Production full alloc | **175 KB** | 8,769 KB | **50× less** |
 
 ---
 
@@ -138,12 +147,20 @@ Scintilla drain is higher because it renders 50k lines with syntax coloring via 
 
 | | Scintilla | Serilog+RTB | Ratio |
 |---|---|---|---|
-| Production enqueue | **9.3 ms** | 51.4 ms | **5.5× faster** |
-| Uncapped enqueue | **9.3 ms** | 72.5 ms | **7.8× faster** |
-| Production alloc | **9.98 MB** | 36.16 MB | **3.6× less** |
-| Uncapped alloc | **9.95 MB** | 132.83 MB | **13.3× less** |
+| Production enqueue | **7.9 ms** | 48.5 ms | **6.2× faster** |
+| Uncapped enqueue | **7.9 ms** | 83.0 ms | **10.5× faster** |
+| Production alloc | **5.4 MB** | 38.62 MB | **7.2× less** |
+| Uncapped alloc | **5.44 MB** | 111.97 MB | **20.6× less** |
 
-At 100k messages uncapped, Serilog allocates **132 MB** vs Scintilla's **10 MB** — a **13× difference**. This is the most production-relevant memory metric.
+#### Full pipeline (enqueue + render)
+
+| | Scintilla | Serilog+RTB | Ratio |
+|---|---|---|---|
+| Production full | **78.5 ms** | 91.9 ms | **1.2× faster** |
+| Uncapped full | **78.3 ms** | 119.4 ms | **1.5× faster** |
+| Uncapped full alloc | **6.12 MB** | 231.39 MB | **37.8× less** |
+
+At 100k messages uncapped, Serilog allocates **231 MB** vs Scintilla's **6 MB** — a **38× difference**. This is the most production-relevant memory metric.
 
 ---
 
@@ -151,9 +168,9 @@ At 100k messages uncapped, Serilog allocates **132 MB** vs Scintilla's **10 MB**
 
 | | Scintilla | RTB | Ratio |
 |---|---|---|---|
-| Highlight+FindNext common token | **1.57 ms** | 49.9 ms | **32× faster** |
-| FindNext rare token | **91 ns** | 60.4 ms | **662,000× faster** |
-| Common token allocation | **554 B** | 168 MB | **303,000× less** |
+| Highlight+FindNext common token | **1.56 ms** | 48.1 ms | **31× faster** |
+| FindNext rare token | **91 ns** | 60.3 ms | **664,000× faster** |
+| Common token allocation | **555 B** | 168 MB | **303,000× less** |
 
 Scintilla uses native Boyer-Moore search (C++ Scintilla engine). RTB scans the full managed string and allocates a new string per search call.
 
@@ -163,11 +180,13 @@ Scintilla uses native Boyer-Moore search (C++ Scintilla engine). RTB scans the f
 
 | Method | Mean | Alloc |
 |--------|------|-------|
-| CPU scan only (lower bound) | 203 μs | 1.27 KB |
-| Serilog re-emit filtered subset (Warning+) | **52,069 μs** | 5,541 KB |
-| Scintilla SetFilter(Warning) reapply | 219,830 μs | **1,919 KB** |
+| CPU scan only (lower bound) | 221 μs | 1.59 KB |
+| Serilog re-emit filtered subset (Warning+) | **52,123 μs** | 5,357 KB |
+| Scintilla SetFilter(Warning) reapply | 434,556 μs | **1,387 KB** |
 
-Scintilla is 4.2× slower wall-clock but allocates 2.9× less. The key distinction: Serilog has no history buffer — the caller must hold the original data and re-emit the filtered subset. Scintilla's history buffer is the source of truth; `SetFilter` replays from it automatically.
+Scintilla is 8.3× slower wall-clock but allocates 3.9× less. The key distinction: Serilog has no history buffer — the caller must hold the original data and re-emit the filtered subset. Scintilla's history buffer is the source of truth; `SetFilter` replays from it automatically.
+
+> **Note:** Filter reapply wall-clock regressed from v0.0.2 (220ms → 435ms). This is under investigation and may be related to increased style range processing. Memory allocation improved (1,919 KB → 1,387 KB).
 
 ---
 
@@ -175,8 +194,8 @@ Scintilla is 4.2× slower wall-clock but allocates 2.9× less. The key distincti
 
 | | Scintilla | RTB | Ratio |
 |---|---|---|---|
-| Production paint | **1.555 ms** | 1.616 ms | **4% faster** |
-| Uncapped paint | **1.551 ms** | 1.577 ms | **2% faster** |
+| Production paint | **1.574 ms** | 1.653 ms | **5% faster** |
+| Uncapped paint | **1.594 ms** | 1.622 ms | **2% faster** |
 
 Effectively equivalent. Both rendering engines perform similarly for a pre-populated document.
 
@@ -186,12 +205,12 @@ Effectively equivalent. Both rendering engines perform similarly for a pre-popul
 
 | Scenario | Scintilla vs Serilog+RTB |
 |----------|--------------------------|
-| **Enqueue throughput** | **2–8× faster** depending on volume |
-| **Memory allocation** | **3–13× less** — largest gap at sustained load |
-| **Search / Find** | **32× – 662,000× faster**, near-zero allocation |
-| **Pixel render** | Equivalent (±4%) |
+| **Enqueue throughput** | **2–10× faster** depending on volume |
+| **Memory allocation** | **6–38× less** — largest gap at sustained load |
+| **Search / Find** | **31× – 664,000× faster**, near-zero allocation |
+| **Pixel render** | Equivalent (±5%) |
 | **Drain / FullPipeline latency** | Higher — async rendering model, not comparable directly |
-| **Filter reapply wall-clock** | 4× slower, but 3× less allocation; built-in history is a unique feature |
+| **Filter reapply wall-clock** | 8× slower, but 4× less allocation; built-in history is a unique feature |
 
 **Scintilla is the right choice for:** high-throughput logging, large document search/filter, memory-constrained environments.
 

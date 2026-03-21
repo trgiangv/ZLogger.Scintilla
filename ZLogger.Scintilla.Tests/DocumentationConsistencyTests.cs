@@ -12,62 +12,57 @@ public sealed class DocumentationConsistencyTests
 {
     private static readonly string RepoRoot = FindRepoRoot();
 
-    // ── docs/architecture.md ─────────────────────────────────────────────────
+    private static readonly string[] StaleTypeReferences =
+    [
+        "LogFilterState", "LogFilterOptions", "LogFilterSpec",
+        "ILogViewerControl", "IScintillaLogViewHost",
+        "ClearMode", "ScintillaViewerControl", "CreateState"
+    ];
+
+    private static readonly string[] StaleApiPatterns =
+    [
+        "SetFilter(string", "SetFilter(\""
+    ];
+
+    private static readonly string[] DocsToScan =
+    [
+        "docs/architecture.md",
+        "docs/usage.md",
+        "docs/benchmarks.md",
+        "docs/testing.md",
+        "README.md"
+    ];
+
+    // ── All docs: no stale type references ──────────────────────────────────
 
     [Fact]
-    public void ArchitectureMd_DoesNotReferenceDeletedFilterState()
+    public void AllDocs_DoNotReferenceDeletedTypes()
     {
-        var content = ReadDoc("docs/architecture.md");
-        Assert.DoesNotContain("LogFilterState", content);
+        foreach (var docPath in DocsToScan)
+        {
+            var fullPath = Path.Combine(RepoRoot, docPath);
+            if (!File.Exists(fullPath)) continue;
+
+            var content = File.ReadAllText(fullPath);
+            foreach (var staleRef in StaleTypeReferences)
+                Assert.False(content.Contains(staleRef),
+                    $"{docPath} contains stale reference to '{staleRef}'");
+        }
     }
 
     [Fact]
-    public void ArchitectureMd_DoesNotReferenceDeletedFilterOptions()
+    public void AllDocs_DoNotReferenceStringSetFilter()
     {
-        var content = ReadDoc("docs/architecture.md");
-        Assert.DoesNotContain("LogFilterOptions", content);
-    }
+        foreach (var docPath in DocsToScan)
+        {
+            var fullPath = Path.Combine(RepoRoot, docPath);
+            if (!File.Exists(fullPath)) continue;
 
-    [Fact]
-    public void ArchitectureMd_DoesNotReferenceDeletedFilterSpec()
-    {
-        var content = ReadDoc("docs/architecture.md");
-        Assert.DoesNotContain("LogFilterSpec", content);
-    }
-
-    [Fact]
-    public void ArchitectureMd_DoesNotReferenceStringSetFilter()
-    {
-        var content = ReadDoc("docs/architecture.md");
-        Assert.DoesNotContain("SetFilter(string", content);
-        Assert.DoesNotContain("SetFilter(\"", content);
-    }
-
-    [Fact]
-    public void ArchitectureMd_DoesNotReferenceCreateState()
-    {
-        var content = ReadDoc("docs/architecture.md");
-        Assert.DoesNotContain("CreateState", content);
-    }
-
-    [Fact]
-    public void ArchitectureMd_DoesNotReferenceDeletedTypes()
-    {
-        var content = ReadDoc("docs/architecture.md");
-        Assert.DoesNotContain("ILogViewerControl", content);
-        Assert.DoesNotContain("IScintillaLogViewHost", content);
-        Assert.DoesNotContain("ClearMode", content);
-        Assert.DoesNotContain("ScintillaViewerControl", content);
-    }
-
-    // ── README.md ────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void ReadmeMd_DoesNotReferenceStringSetFilter()
-    {
-        var content = ReadDoc("README.md");
-        Assert.DoesNotContain("SetFilter(\"", content);
-        Assert.DoesNotContain("SetFilter(string", content);
+            var content = File.ReadAllText(fullPath);
+            foreach (var pattern in StaleApiPatterns)
+                Assert.False(content.Contains(pattern),
+                    $"{docPath} contains stale API pattern '{pattern}'");
+        }
     }
 
     // ── API existence checks ─────────────────────────────────────────────────

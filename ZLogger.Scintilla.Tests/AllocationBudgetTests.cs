@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
 
@@ -66,20 +65,9 @@ public sealed class AllocationBudgetTests
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static LogEntry MakeEntry(string text, LogLevel level)
-    {
-        var bytes = Encoding.UTF8.GetBytes(text);
-        return new LogEntry
-        {
-            Level = level,
-            Message = new ArraySegment<byte>(bytes),
-            Properties = LogEntry.EmptyProperties
-        };
-    }
-
     private static LogEntry MakeEntryWithRelease(Action onRelease)
     {
-        var entry = MakeEntry("test", LogLevel.Information);
+        var entry = TestHelper.MakeEntry("test", LogLevel.Information);
         entry.AttachBufferLease(_ => onRelease());
         return entry;
     }

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("ingest", "colorized", "search", "filter", "paint", "sustained", "all")]
+    [ValidateSet("ingest", "colorized", "search", "filter", "paint", "sustained", "json", "all")]
     [string]$Suite = "all",
     [string]$Configuration = "Release",
     [switch]$RunRegressionGuard,
@@ -26,6 +26,9 @@ switch ($Suite) {
     }
     "sustained" {
         dotnet run --project $project -c $Configuration -- --filter "*SustainedLoadBenchmark*"
+    }
+    "json" {
+        dotnet run --project $project -c $Configuration -- --filter "*JsonPipelineBenchmark*"
     }
     default {
         dotnet run --project $project -c $Configuration
