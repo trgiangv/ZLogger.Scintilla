@@ -28,7 +28,6 @@ namespace ZLogger.Scintilla.Benchmarks.Benchmarks;
 ///                          baseline for any filter operation on this dataset.
 /// </summary>
 [Config(typeof(InProcessBenchmarkConfig))]
-[MemoryDiagnoser]
 public class FilterReapplyBenchmark
 {
     private const int DocumentSize = 50_000;

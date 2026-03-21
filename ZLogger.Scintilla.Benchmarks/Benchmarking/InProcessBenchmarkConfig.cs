@@ -13,7 +13,7 @@ internal sealed class InProcessBenchmarkConfig : ManualConfig
 {
     public InProcessBenchmarkConfig()
     {
-        var artifactPath = Environment.GetEnvironmentVariable("RDT_BENCH_ARTIFACTS");
+        var artifactPath = Environment.GetEnvironmentVariable("ZLOGGER_BENCH_ARTIFACTS");
         if (string.IsNullOrWhiteSpace(artifactPath))
             artifactPath = Path.Combine(Environment.CurrentDirectory, "BenchmarkDotNet.Artifacts");
         WithArtifactsPath(artifactPath);

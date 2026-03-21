@@ -6,9 +6,3 @@ public enum TokenDensity
     Medium = 1,
     High = 2
 }
-
-public enum PipelineMode
-{
-    Baseline = 0,
-    Optimized = 1
-}

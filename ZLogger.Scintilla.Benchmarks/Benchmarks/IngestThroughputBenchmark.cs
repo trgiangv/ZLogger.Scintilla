@@ -21,13 +21,12 @@ namespace ZLogger.Scintilla.Benchmarks.Benchmarks;
 ///   *_Drain    — time for the UI to finish rendering everything already in the pipeline.
 ///                Serilog: WaitForRichTextStable() polls TextLength stability.
 ///                Scintilla: WaitForScintillaDrain() polls RenderedMessages counter.
-///                Both start AFTER enqueue is complete (IterationSetup pre-fills).
-///                Measures render-thread throughput in isolation.
+///                Both enqueue inside the measured method, then wait for render.
+///                Measures total end-to-end latency (enqueue + render).
 ///
 /// Two groups: Production (Serilog 2048-line cap) and Uncapped (50k fair compare).
 /// </summary>
 [Config(typeof(InProcessBenchmarkConfig))]
-[MemoryDiagnoser]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class IngestThroughputBenchmark
 {

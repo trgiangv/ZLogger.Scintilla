@@ -32,24 +32,6 @@ internal static class BenchmarkHarness
             .History(maxEntries: maxHistory, disabled: disableHistory));
     }
 
-    public static ILoggerFactory CreateZLoggerFactory(
-        int maxLines = 50_000,
-        int maxHistory = 50_000,
-        bool disableHistory = false,
-        bool autoScroll = false,
-        int maxBatchSize = 4096,
-        int flushIntervalMs = 1)
-    {
-        return LoggerFactory.Create(builder =>
-        {
-            builder.ClearProviders();
-            builder.AddZLoggerScintillaWinForms(v => v
-                .Display(maxLines: maxLines, autoScroll: autoScroll)
-                .Channel(maxBatch: maxBatchSize, flushMs: flushIntervalMs)
-                .History(maxEntries: maxHistory, disabled: disableHistory));
-        });
-    }
-
     // ── Serilog factories ────────────────────────────────────────────────
 
     public static (RichTextBox rtb, Serilog.ILogger logger, RichTextBoxSink sink) CreateSerilogProductionSink()

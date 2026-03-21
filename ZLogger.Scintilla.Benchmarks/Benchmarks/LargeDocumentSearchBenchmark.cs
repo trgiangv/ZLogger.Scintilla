@@ -11,7 +11,6 @@ namespace ZLogger.Scintilla.Benchmarks.Benchmarks;
 /// Tests: HighlightSearch + FindNext on a common token, and FindNext on a rare/absent token.
 /// </summary>
 [Config(typeof(InProcessBenchmarkConfig))]
-[MemoryDiagnoser]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class LargeDocumentSearchBenchmark
 {

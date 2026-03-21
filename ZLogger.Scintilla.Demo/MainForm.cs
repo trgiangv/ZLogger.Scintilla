@@ -250,6 +250,19 @@ internal sealed class MainForm : Form
         };
         _logger.ZLogInformation($"{classPayload}");
 
+        var apiConfig = new
+        {
+            BaseUrl = "https://api.example.com/v2",
+            DocsUrl = "https://learn.microsoft.com/dotnet/api",
+            HealthCheck = "https://status.example.com/health",
+            Endpoints = new[]
+            {
+                "https://api.example.com/v2/users",
+                "https://api.example.com/v2/orders"
+            }
+        };
+        _logger.ZLogInformation($"API config loaded: {apiConfig}");
+
         _logger.ZLogDebug($"=== EXCEPTION TEST ===");
         try
         {

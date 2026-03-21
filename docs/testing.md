@@ -83,7 +83,7 @@ Asserts the exact public member set of `ScintillaLogViewerBase`, `IScintillaThem
 
 ### Documentation Consistency
 
-Scans `docs/` for references to deleted types (`LogFilterState`, `LogFilterOptions`, `LogFilterSpec`, etc.). Fails if any stale reference is found.
+Scans `docs/architecture.md` and `README.md` for references to deleted types (`LogFilterState`, `LogFilterOptions`, `LogFilterSpec`, etc.) and removed API patterns (`SetFilter(string`). Fails if any stale reference is found.
 
 ### Filter Semantics
 

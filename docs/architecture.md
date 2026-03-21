@@ -308,3 +308,36 @@ ZLogger.Scintilla/
 | `ScintillaInteractionService` | Click/hover → invoke link `Action` |
 | `StyleMapper` | `RenderSegment[]` → `StyleRange[]` |
 | `NativeWindowsHelper` | Win32 dark mode |
+
+---
+
+## Build & Packaging
+
+```mermaid
+flowchart LR
+    subgraph Sources
+        Main["ZLogger.Scintilla<br/>(main project)"]
+        LE["LookupEngine<br/>(git submodule)"]
+        LEA["LookupEngine.Abstractions"]
+    end
+
+    subgraph Build["Release Build"]
+        Compile["dotnet build -c Release"]
+        ILRepack["ILRepack.Lib.MSBuild.Task"]
+    end
+
+    subgraph Output["NuGet Package"]
+        Merged["ZLogger.Scintilla.dll<br/>(merged assembly)"]
+    end
+
+    Main --> Compile
+    LE --> Compile
+    LEA --> Compile
+    Compile --> ILRepack
+    ILRepack -->|"merge 3 DLLs"| Merged
+```
+
+- **LookupEngine** is a git submodule at `external/LookupEngine` — provides object decomposition for pretty JSON
+- On **Release** builds, `ILRepack.targets` merges `LookupEngine.dll` + `LookupEngine.Abstractions.dll` into `ZLogger.Scintilla.dll`
+- The NuGet package ships a **single assembly** with no external LookupEngine dependency
+- LookupEngine types remain public in the merged assembly (not internalized)

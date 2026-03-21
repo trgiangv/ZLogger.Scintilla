@@ -108,4 +108,6 @@ dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- --filter *
 | `ZLogger` | Structured logging source |
 | `Microsoft.Extensions.Logging` | `ILogger` / `IHost` integration |
 | `System.Threading.Channels` | Bounded ingest queue |
-| `LookupEngine` | Object decomposition for pretty JSON |
+| [LookupEngine](https://github.com/lookup-foundation/LookupEngine) | Object decomposition for pretty JSON (bundled via ILRepack) |
+
+> **Note:** `LookupEngine` is included as a git submodule and merged into `ZLogger.Scintilla.dll` at build time using ILRepack. The NuGet package ships a single assembly with no external LookupEngine dependency.

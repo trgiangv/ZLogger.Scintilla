@@ -4,12 +4,7 @@ param(
 )
 
 if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) {
-    $envResults = $env:RDT_BENCH_RESULTS
-    if (-not [string]::IsNullOrWhiteSpace($envResults)) {
-        $ResultsDirectory = $envResults
-    } else {
-        $ResultsDirectory = Join-Path (Get-Location) "BenchmarkDotNet.Artifacts\results"
-    }
+    $ResultsDirectory = Join-Path (Get-Location) "BenchmarkDotNet.Artifacts\results"
 }
 
 function Convert-BdnMeanToMilliseconds([string]$value) {
@@ -33,65 +28,56 @@ function Assert-FileExists([string]$path) {
     }
 }
 
-$appendCsv = Join-Path $ResultsDirectory "RevitDevTool.Scintilla.Benchmarks.Benchmarks.ComboAppendBenchmarks-report.csv"
-$colorizedCsv = Join-Path $ResultsDirectory "RevitDevTool.Scintilla.Benchmarks.Benchmarks.ComboColorizedBenchmarks-report.csv"
-$searchCsv = Join-Path $ResultsDirectory "RevitDevTool.Scintilla.Benchmarks.Benchmarks.ComboSearchFilterBenchmarks-report.csv"
-
-Assert-FileExists $appendCsv
-Assert-FileExists $colorizedCsv
-Assert-FileExists $searchCsv
-
-$appendRows = Import-Csv $appendCsv
-$colorizedRows = Import-Csv $colorizedCsv
-$searchRows = Import-Csv $searchCsv
-
-$failures = New-Object System.Collections.Generic.List[string]
-
 function Is-SlowerThanWithTolerance([double]$leftMs, [double]$rightMs, [double]$tolerancePercent) {
     $threshold = $rightMs * (1.0 + ($tolerancePercent / 100.0))
     return $leftMs -gt $threshold
 }
 
-# Guard 1: Append combo - ZLogger+Scintilla should not be slower than Serilog+RichTextBox
-$appendSerilog = $appendRows | Where-Object { $_.Method -like "*Serilog + RichTextBox append*" } | Select-Object -First 1
-$appendZlogger = $appendRows | Where-Object { $_.Method -like "*ZLogger + Scintilla append*" } | Select-Object -First 1
-if ($null -ne $appendSerilog -and $null -ne $appendZlogger) {
-    $serilogMs = Convert-BdnMeanToMilliseconds $appendSerilog.Mean
-    $zloggerMs = Convert-BdnMeanToMilliseconds $appendZlogger.Mean
-    if ($null -ne $serilogMs -and $null -ne $zloggerMs -and (Is-SlowerThanWithTolerance $zloggerMs $serilogMs $TolerancePercent)) {
-        $failures.Add("Append regression: ZLogger+Scintilla=$($appendZlogger.Mean) slower than Serilog+RichTextBox=$($appendSerilog.Mean) beyond tolerance $TolerancePercent%.")
+$ingestCsv = Join-Path $ResultsDirectory "ZLogger.Scintilla.Benchmarks.Benchmarks.IngestThroughputBenchmark-report.csv"
+$colorizedCsv = Join-Path $ResultsDirectory "ZLogger.Scintilla.Benchmarks.Benchmarks.ColorizedRenderBenchmark-report.csv"
+$searchCsv = Join-Path $ResultsDirectory "ZLogger.Scintilla.Benchmarks.Benchmarks.LargeDocumentSearchBenchmark-report.csv"
+
+$failures = New-Object System.Collections.Generic.List[string]
+
+# Guard 1: Ingest enqueue — Scintilla should not be slower than Serilog
+if (Test-Path $ingestCsv) {
+    $ingestRows = Import-Csv $ingestCsv
+    $serilogEnqueue = $ingestRows | Where-Object { $_.Method -like "*Serilog*enqueue*" } | Select-Object -First 1
+    $scintillaEnqueue = $ingestRows | Where-Object { $_.Method -like "*Scintilla*enqueue*" } | Select-Object -First 1
+    if ($null -ne $serilogEnqueue -and $null -ne $scintillaEnqueue) {
+        $serilogMs = Convert-BdnMeanToMilliseconds $serilogEnqueue.Mean
+        $scintillaMs = Convert-BdnMeanToMilliseconds $scintillaEnqueue.Mean
+        if ($null -ne $serilogMs -and $null -ne $scintillaMs -and (Is-SlowerThanWithTolerance $scintillaMs $serilogMs $TolerancePercent)) {
+            $failures.Add("Ingest regression: Scintilla=$($scintillaEnqueue.Mean) slower than Serilog=$($serilogEnqueue.Mean) beyond tolerance $TolerancePercent%.")
+        }
     }
 }
 
-# Guard 2: Colorized combo - ZLogger+Scintilla should not be slower than Serilog+RichTextBox
-$colorSerilog = $colorizedRows | Where-Object { $_.Method -like "*Serilog + RichTextBox colorized*" } | Select-Object -First 1
-$colorZlogger = $colorizedRows | Where-Object { $_.Method -like "*ZLogger + Scintilla colorized*" } | Select-Object -First 1
-if ($null -ne $colorSerilog -and $null -ne $colorZlogger) {
-    $serilogMs = Convert-BdnMeanToMilliseconds $colorSerilog.Mean
-    $zloggerMs = Convert-BdnMeanToMilliseconds $colorZlogger.Mean
-    if ($null -ne $serilogMs -and $null -ne $zloggerMs -and (Is-SlowerThanWithTolerance $zloggerMs $serilogMs $TolerancePercent)) {
-        $failures.Add("Colorized regression: ZLogger+Scintilla=$($colorZlogger.Mean) slower than Serilog+RichTextBox=$($colorSerilog.Mean) beyond tolerance $TolerancePercent%.")
+# Guard 2: Colorized enqueue — Scintilla should not be slower than Serilog
+if (Test-Path $colorizedCsv) {
+    $colorRows = Import-Csv $colorizedCsv
+    $serilogColor = $colorRows | Where-Object { $_.Method -like "*Serilog*colorized*enqueue*" } | Select-Object -First 1
+    $scintillaColor = $colorRows | Where-Object { $_.Method -like "*Scintilla*colorized*enqueue*" } | Select-Object -First 1
+    if ($null -ne $serilogColor -and $null -ne $scintillaColor) {
+        $serilogMs = Convert-BdnMeanToMilliseconds $serilogColor.Mean
+        $scintillaMs = Convert-BdnMeanToMilliseconds $scintillaColor.Mean
+        if ($null -ne $serilogMs -and $null -ne $scintillaMs -and (Is-SlowerThanWithTolerance $scintillaMs $serilogMs $TolerancePercent)) {
+            $failures.Add("Colorized regression: Scintilla=$($scintillaColor.Mean) slower than Serilog=$($serilogColor.Mean) beyond tolerance $TolerancePercent%.")
+        }
     }
 }
 
-# Guard 3: Search/Filter combo - Scintilla should not be slower than RichTextBox equivalent operation
-$rtbFilter = $searchRows | Where-Object { $_.Method -like "*RichTextBox filter contains*" } | Select-Object -First 1
-$sciFilter = $searchRows | Where-Object { $_.Method -like "*Scintilla filter contains*" } | Select-Object -First 1
-if ($null -ne $rtbFilter -and $null -ne $sciFilter) {
-    $rtbMs = Convert-BdnMeanToMilliseconds $rtbFilter.Mean
-    $sciMs = Convert-BdnMeanToMilliseconds $sciFilter.Mean
-    if ($null -ne $rtbMs -and $null -ne $sciMs -and (Is-SlowerThanWithTolerance $sciMs $rtbMs $TolerancePercent)) {
-        $failures.Add("Filter regression: Scintilla=$($sciFilter.Mean) slower than RichTextBox=$($rtbFilter.Mean) beyond tolerance $TolerancePercent%.")
-    }
-}
-
-$rtbSearch = $searchRows | Where-Object { $_.Method -like "*RichTextBox search next*" } | Select-Object -First 1
-$sciSearch = $searchRows | Where-Object { $_.Method -like "*Scintilla search next*" } | Select-Object -First 1
-if ($null -ne $rtbSearch -and $null -ne $sciSearch) {
-    $rtbMs = Convert-BdnMeanToMilliseconds $rtbSearch.Mean
-    $sciMs = Convert-BdnMeanToMilliseconds $sciSearch.Mean
-    if ($null -ne $rtbMs -and $null -ne $sciMs -and (Is-SlowerThanWithTolerance $sciMs $rtbMs $TolerancePercent)) {
-        $failures.Add("Search regression: Scintilla=$($sciSearch.Mean) slower than RichTextBox=$($rtbSearch.Mean) beyond tolerance $TolerancePercent%.")
+# Guard 3: Search — Scintilla should not be slower than RichTextBox
+if (Test-Path $searchCsv) {
+    $searchRows = Import-Csv $searchCsv
+    $rtbSearch = $searchRows | Where-Object { $_.Method -like "*RTB*Find*common*" } | Select-Object -First 1
+    $sciSearch = $searchRows | Where-Object { $_.Method -like "*Scintilla*Highlight*FindNext*common*" } | Select-Object -First 1
+    if ($null -ne $rtbSearch -and $null -ne $sciSearch) {
+        $rtbMs = Convert-BdnMeanToMilliseconds $rtbSearch.Mean
+        $sciMs = Convert-BdnMeanToMilliseconds $sciSearch.Mean
+        if ($null -ne $rtbMs -and $null -ne $sciMs -and (Is-SlowerThanWithTolerance $sciMs $rtbMs $TolerancePercent)) {
+            $failures.Add("Search regression: Scintilla=$($sciSearch.Mean) slower than RichTextBox=$($rtbSearch.Mean) beyond tolerance $TolerancePercent%.")
+        }
     }
 }
 

@@ -213,7 +213,7 @@ See `Public/ILogColorizer.cs` for the contract signature.
 
 ### ILinkifier
 
-Make tokens clickable. Receives `RenderContext` with typed parameter metadata via `ParameterSpan.HasParameter(context, clrTypeName, formattedValue)`. Called on the **pump thread** — must be thread-safe.
+Make tokens clickable. Receives `RenderContext` with typed parameter metadata via `ParameterSpan.HasParameter(context, clrTypeFullName, formattedValue)`. Called on the **pump thread** — must be thread-safe.
 
 See `Public/ILinkifier.cs` for the contract signature.
 
@@ -252,4 +252,6 @@ sequenceDiagram
 | `ZLogger` | Structured logging source |
 | `Microsoft.Extensions.Logging` | `ILogger` / `IHost` integration |
 | `System.Threading.Channels` | Bounded ingest queue |
-| `LookupEngine` | Object decomposition for pretty JSON |
+| [LookupEngine](https://github.com/lookup-foundation/LookupEngine) | Object decomposition for pretty JSON (bundled via ILRepack) |
+
+> **Note:** `LookupEngine` is included as a git submodule under `external/LookupEngine` and merged into `ZLogger.Scintilla.dll` at build time using ILRepack. The NuGet package ships a single assembly with no external LookupEngine dependency.

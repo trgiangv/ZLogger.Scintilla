@@ -24,7 +24,6 @@ namespace ZLogger.Scintilla.Benchmarks.Benchmarks;
 /// Two groups: Production (Serilog 2048-line cap) and Uncapped (50k fair compare).
 /// </summary>
 [Config(typeof(InProcessBenchmarkConfig))]
-[MemoryDiagnoser]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class ColorizedRenderBenchmark
 {

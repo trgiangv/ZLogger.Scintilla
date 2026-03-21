@@ -1,22 +1,31 @@
 param(
-    [ValidateSet("full", "core", "pixel", "all")]
+    [ValidateSet("ingest", "colorized", "search", "filter", "paint", "sustained", "all")]
     [string]$Suite = "all",
     [string]$Configuration = "Release",
     [switch]$RunRegressionGuard,
     [double]$RegressionTolerancePercent = 5.0
 )
 
-$project = "source/RevitDevTool.Scintilla.Benchmarks/RevitDevTool.Scintilla.Benchmarks.csproj"
+$project = "ZLogger.Scintilla.Benchmarks/ZLogger.Scintilla.Benchmarks.csproj"
 
 switch ($Suite) {
-    "full" {
-        dotnet run --project $project -c $Configuration -- --filter "*ComboAppendBenchmarks*" "*ComboColorizedBenchmarks*" "*ComboSearchFilterBenchmarks*"
+    "ingest" {
+        dotnet run --project $project -c $Configuration -- --filter "*IngestThroughputBenchmark*"
     }
-    "core" {
-        dotnet run --project $project -c $Configuration -- --filter "*CoreBenchmarks*"
+    "colorized" {
+        dotnet run --project $project -c $Configuration -- --filter "*ColorizedRenderBenchmark*"
     }
-    "pixel" {
-        dotnet run --project $project -c $Configuration -- --filter "*ComboPixelDrawBenchmarks*"
+    "search" {
+        dotnet run --project $project -c $Configuration -- --filter "*LargeDocumentSearchBenchmark*"
+    }
+    "filter" {
+        dotnet run --project $project -c $Configuration -- --filter "*FilterReapplyBenchmark*"
+    }
+    "paint" {
+        dotnet run --project $project -c $Configuration -- --filter "*PaintBenchmark*"
+    }
+    "sustained" {
+        dotnet run --project $project -c $Configuration -- --filter "*SustainedLoadBenchmark*"
     }
     default {
         dotnet run --project $project -c $Configuration
@@ -24,5 +33,5 @@ switch ($Suite) {
 }
 
 if ($RunRegressionGuard) {
-    .\source\RevitDevTool.Scintilla.Benchmarks\check-regression.ps1 -TolerancePercent $RegressionTolerancePercent
+    .\ZLogger.Scintilla.Benchmarks\check-regression.ps1 -TolerancePercent $RegressionTolerancePercent
 }

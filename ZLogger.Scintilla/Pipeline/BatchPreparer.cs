@@ -116,7 +116,12 @@ internal sealed class BatchPreparer(LogRenderer renderer, bool enableTokenLinks)
         written += jsonUtf8Count;
 
         renderer.BuildJsonSegments(jsonText, _jsonSegments);
+        var jsonStyleStartIndex = _styleRangeList.Count;
+        var jsonTextOffset = written - jsonUtf8Count;
         AppendStyleRangesFromSegments(_jsonSegments, entry.Level, jsonUtf8Count);
+
+        if (enableTokenLinks)
+            CollectTokenRangesFromStyles(jsonStyleStartIndex, jsonTextOffset);
 
         Buffer.BlockCopy(LogConstants.NewLineBytes, 0, _scratchBuffer, written, LogConstants.NewLineBytes.Length);
         written += LogConstants.NewLineBytes.Length;

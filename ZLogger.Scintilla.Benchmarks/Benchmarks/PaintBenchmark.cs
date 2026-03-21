@@ -10,7 +10,6 @@ namespace ZLogger.Scintilla.Benchmarks.Benchmarks;
 /// No ingest during measurement — only paint overhead.
 /// </summary>
 [Config(typeof(InProcessBenchmarkConfig))]
-[MemoryDiagnoser]
 [GroupBenchmarksBy(BenchmarkDotNet.Configs.BenchmarkLogicalGroupRule.ByCategory)]
 public class PaintBenchmark
 {

@@ -117,7 +117,7 @@ public sealed class PublicApiShapeTests
     }
 
     [Fact]
-    public void ScintillaLogViewerOptions_HasNoStringFilterMethod()
+    public void ScintillaOptions_HasNoStringFilterMethod()
     {
         var methods = typeof(ScintillaOptions)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance);
