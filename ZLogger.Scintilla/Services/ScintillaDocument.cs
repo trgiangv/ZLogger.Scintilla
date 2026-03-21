@@ -180,17 +180,19 @@ internal sealed class ScintillaDocument : IDisposable
     public void Clear()
     {
         _searchService.InvalidateMatchIndex();
-        var wasReadOnly = BeginMutableSection();
-        try
-        {
-            _scintilla.ClearAll();
-            _scintilla.EmptyUndoBuffer();
-            _tokenRanges.Clear();
-        }
-        finally
-        {
-            EndMutableSection(wasReadOnly);
-        }
+
+        var oldDoc = _scintilla.Document;
+        var newDoc = _scintilla.CreateDocument();
+        _scintilla.Document = newDoc;
+        _scintilla.ReleaseDocument(oldDoc);
+
+        _scintilla.DirectMessage(LogConstants.SciSetUndoCollection, IntPtr.Zero, IntPtr.Zero);
+        _scintilla.EmptyUndoBuffer();
+        _scintilla.WrapMode = WrapMode.Word;
+        _scintilla.ReadOnly = true;
+
+        _tokenRanges.Clear();
+        _tokenRanges.TrimExcess();
 
         RefreshSearchHighlightIfActive();
     }
@@ -438,5 +440,4 @@ internal sealed class ScintillaDocument : IDisposable
 
         return count;
     }
-
 }
