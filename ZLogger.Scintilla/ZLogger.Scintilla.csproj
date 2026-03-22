@@ -11,7 +11,7 @@
 
     <PropertyGroup>
         <PackageId>ZLogger.Scintilla</PackageId>
-        <Version>0.0.4</Version>
+        <Version>0.0.5</Version>
         <Authors>trgiangv</Authors>
         <Description>High-throughput, syntax-highlighted log viewer for WinForms and WPF, built on Scintilla.NET and ZLogger.</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>

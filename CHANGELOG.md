@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ---
 
+## [0.0.5] - 2026-03-22
+
+### Fix
+- Reduce maximun json decomposition depth
+
+
 ## [0.0.4] — 2026-03-21
 
 ### Added
