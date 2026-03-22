@@ -114,9 +114,18 @@ public abstract class ScintillaLogViewerBase : IDisposable
         }
         if (cts == null) return;
         cts.Cancel();
-        try { pumpTask?.GetAwaiter().GetResult(); }
-        catch (OperationCanceledException) { /* ignored */ }
-        finally { cts.Dispose(); }
+        try
+        {
+            pumpTask?.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            // ignored
+        }
+        finally
+        {
+            cts.Dispose();
+        }
     }
 
     public void Clear()
@@ -153,7 +162,17 @@ public abstract class ScintillaLogViewerBase : IDisposable
         Dispatch(() => _document.SetLineNumbers(enabled));
     }
 
-    internal void AttachProcessor(ScintillaLogProcessor processor) => _processor = processor;
+    public void SetJsonDepth(int depth)
+    {
+        ThrowIfDisposed();
+        _processor?.SetJsonDepth(depth);
+    }
+
+    internal void AttachProcessor(ScintillaLogProcessor processor)
+    {
+        _processor = processor;
+        processor.SetJsonDepth(_options.JsonDecomposeDepth);
+    }
 
     public void SetFilter(LogLevel minimumLevel)
     {

@@ -32,7 +32,13 @@ public sealed class ScintillaOptions
     /// <summary>Enable clickable link tokens. True when any linkifier is registered.</summary>
     public bool EnableTokenLinks => Linkifier is not null;
 
+    /// <summary>
+    /// Registers a sink for exceptions thrown by colorizers and linkifiers during rendering.
+    /// </summary>
     public Action<Exception>? EnrichmentErrorSink { get; private set; }
+
+    /// <summary>Max recursion depth for JSON object decomposition in pretty-print mode. Default 2.</summary>
+    public int JsonDecomposeDepth { get; private set; } = 2;
 
     /// <summary>Configures the ingest channel.</summary>
     public ScintillaOptions Channel(
@@ -103,6 +109,17 @@ public sealed class ScintillaOptions
     public ScintillaOptions WithEnrichmentErrorSink(Action<Exception> sink)
     {
         EnrichmentErrorSink = sink;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the max recursion depth for JSON object decomposition in pretty-print mode.
+    /// Higher values produce more detailed JSON but risk performance with deeply nested or circular objects.
+    /// Default is 2.
+    /// </summary>
+    public ScintillaOptions JsonDepth(int depth)
+    {
+        JsonDecomposeDepth = depth > 0 ? depth : 2;
         return this;
     }
 }

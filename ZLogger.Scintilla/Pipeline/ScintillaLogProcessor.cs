@@ -8,6 +8,7 @@ using LookupEngine;
 using LookupEngine.Abstractions;
 using LookupEngine.Abstractions.Enums;
 using ZLogger.Scintilla.Models;
+using ZLogger.Scintilla.Rendering;
 // ReSharper disable ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
 namespace ZLogger.Scintilla.Pipeline;
 
@@ -18,22 +19,11 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
     [ThreadStatic]
     private static ArrayBufferWriter<byte>? _jsonBuffer;
 
-    private static readonly DecomposeOptions LogDecomposeOptions = new()
-    {
-        IncludeRoot = false,
-        IncludeFields = false,
-        IncludeEvents = false,
-        IncludeUnsupported = false,
-        IncludePrivateMembers = false,
-        IncludeStaticMembers = false,
-        EnableExtensions = false,
-        EnableRedirection = false
-    };
-
-    private readonly IZLoggerFormatter _formatter = new Rendering.ScintillaLogFormatter();
+    private readonly IZLoggerFormatter _formatter = new ScintillaLogFormatter();
     private readonly Func<LogEntry, bool> _tryPost;
     private int _disposed;
     private volatile bool _prettyJsonEnabled;
+    private volatile int _maxDecomposeDepth = 2;
 
     internal ScintillaLogProcessor(Func<LogEntry, bool> tryPost)
     {
@@ -41,6 +31,7 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
     }
 
     internal void SetPrettyJson(bool enabled) => _prettyJsonEnabled = enabled;
+    internal void SetJsonDepth(int depth) => _maxDecomposeDepth = depth > 0 ? depth : 2;
 
     public void Post(IZLoggerEntry log)
     {
@@ -103,7 +94,7 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         }
     }
 
-    private static byte[]? FormatJsonBytes(IZLoggerEntry log)
+    private byte[]? FormatJsonBytes(IZLoggerEntry log)
     {
         if (log.ParameterCount == 0)
             return null;
@@ -139,32 +130,39 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         }
     }
 
-    private static bool TryWriteParameter(Utf8JsonWriter writer, IZLoggerEntry log, int index)
+    private bool TryWriteParameter(Utf8JsonWriter writer, IZLoggerEntry log, int index)
     {
         var value = log.GetParameterValue(index);
         if (value is null || value is Exception || ParameterSpan.IsLeafType(value.GetType()))
             return false;
 
+        var key = log.GetParameterKeyAsString(index);
+        writer.WritePropertyName(string.IsNullOrEmpty(key) ? $"arg{index}" : key);
+
+        if (value is System.Collections.IEnumerable enumerable)
+        {
+            WriteEnumerable(writer, enumerable, 0, _maxDecomposeDepth);
+            return true;
+        }
+
         try
         {
-            var decomposed = LookupComposer.Decompose(value, LogDecomposeOptions);
+            var decomposed = LookupComposer.Decompose(value, DecomposeOptions.Default);
             if (decomposed.Members.Count == 0)
-                return false;
-
-            var key = log.GetParameterKeyAsString(index);
-            writer.WritePropertyName(string.IsNullOrEmpty(key) ? $"arg{index}" : key);
-            WriteDecomposedJson(writer, decomposed);
+            {
+                WriteJsonValue(writer, value); return true;
+            }
+            WriteDecomposedJson(writer, decomposed, 0, _maxDecomposeDepth);
             return true;
         }
         catch
         {
-            return false;
+            WriteJsonValue(writer, value);
+            return true;
         }
     }
 
-    private const int MaxDecomposeDepth = 2;
-
-    private static void WriteDecomposedJson(Utf8JsonWriter writer, DecomposedObject decomposed, int depth = 0)
+    private static void WriteDecomposedJson(Utf8JsonWriter writer, DecomposedObject decomposed, int depth, int maxDepth)
     {
         writer.WriteStartObject();
         writer.WriteString("$type", decomposed.TypeName);
@@ -173,13 +171,13 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         {
             if ((member.MemberAttributes & MemberAttributes.Property) == 0) continue;
             writer.WritePropertyName(member.Name);
-            WriteDecomposedValue(writer, member.Value, depth);
+            WriteDecomposedValue(writer, member.Value, depth, maxDepth);
         }
 
         writer.WriteEndObject();
     }
 
-    private static void WriteDecomposedValue(Utf8JsonWriter writer, DecomposedValue dv, int depth)
+    private static void WriteDecomposedValue(Utf8JsonWriter writer, DecomposedValue dv, int depth, int maxDepth)
     {
         var raw = dv.RawValue;
 
@@ -187,22 +185,21 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         {
             writer.WriteNullValue(); return;
         }
-        if (depth >= MaxDecomposeDepth || ParameterSpan.IsLeafType(raw.GetType()))
+        if (depth >= maxDepth || ParameterSpan.IsLeafType(raw.GetType()))
         {
             WriteJsonValue(writer, raw); return;
         }
         if (raw is System.Collections.IEnumerable enumerable)
         {
-            WriteEnumerable(writer, enumerable, depth); return;
+            WriteEnumerable(writer, enumerable, depth, maxDepth); return;
         }
 
         try
         {
-            var child = LookupComposer.Decompose(raw, LogDecomposeOptions);
+            var child = LookupComposer.Decompose(raw, DecomposeOptions.Default);
             if (child.Members.Count > 0)
             {
-                WriteDecomposedJson(writer, child, depth + 1);
-                return;
+                WriteDecomposedJson(writer, child, depth + 1, maxDepth); return;
             }
         }
         catch
@@ -213,27 +210,33 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         WriteJsonValue(writer, raw);
     }
 
-    private static void WriteEnumerable(Utf8JsonWriter writer, System.Collections.IEnumerable enumerable, int depth)
+    private static void WriteEnumerable(Utf8JsonWriter writer, System.Collections.IEnumerable enumerable, int depth, int maxDepth)
     {
         writer.WriteStartArray();
         var count = 0;
         foreach (var item in enumerable)
         {
             if (count++ >= 50) break;
-            WriteElementValue(writer, item, depth);
+            WriteElementValue(writer, item, depth, maxDepth);
         }
         writer.WriteEndArray();
     }
 
-    private static void WriteElementValue(Utf8JsonWriter writer, object? item, int depth)
+    private static void WriteElementValue(Utf8JsonWriter writer, object? item, int depth, int maxDepth)
     {
-        if (item is null) { writer.WriteNullValue(); return; }
-        if (ParameterSpan.IsLeafType(item.GetType())) { WriteJsonValue(writer, item); return; }
+        if (item is null)
+        {
+            writer.WriteNullValue(); return;
+        }
+        if (ParameterSpan.IsLeafType(item.GetType()))
+        {
+            WriteJsonValue(writer, item); return;
+        }
 
         try
         {
-            var child = LookupComposer.Decompose(item, LogDecomposeOptions);
-            WriteDecomposedJson(writer, child, depth + 1);
+            var child = LookupComposer.Decompose(item, DecomposeOptions.Default);
+            WriteDecomposedJson(writer, child, depth + 1, maxDepth);
         }
         catch
         {
@@ -243,14 +246,20 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
 
     private static void WriteJsonValue(Utf8JsonWriter writer, object value)
     {
-        try
+        if (value is IConvertible)
         {
-            JsonSerializer.Serialize(writer, value, value.GetType());
+            try
+            {
+                JsonSerializer.Serialize(writer, value, value.GetType());
+                return;
+            }
+            catch
+            {
+                 // ignored
+            }
         }
-        catch
-        {
-            writer.WriteStringValue(value.ToString());
-        }
+
+        writer.WriteStringValue(value.ToString());
     }
 
     private static ArrayBufferWriter<byte> GetThreadTextBuffer()

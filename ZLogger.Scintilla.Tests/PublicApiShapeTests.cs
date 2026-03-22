@@ -65,7 +65,7 @@ public sealed class PublicApiShapeTests
             "ScintillaControl",
             "Start", "Stop",
             "Clear",
-            "SetTheme", "SetPrettyJson", "SetLineNumbers",
+            "SetTheme", "SetPrettyJson", "SetJsonDepth", "SetLineNumbers",
             "SetFilter",
             "HighlightSearch", "ClearSearch",
             "FindNext", "FindNextAsync",
