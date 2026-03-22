@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ---
 
+## [0.0.6] - 2026-03-22
+
+### Added
+- JSON decomposition depth mutable at runtime
+
+### Fix
+- JsonSerializer.Serialize conflict with deep nested
+
 ## [0.0.5] - 2026-03-22
 
 ### Fix
