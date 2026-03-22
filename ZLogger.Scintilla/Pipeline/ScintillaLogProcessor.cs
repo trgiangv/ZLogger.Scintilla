@@ -162,7 +162,7 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         }
     }
 
-    private const int MaxDecomposeDepth = 3;
+    private const int MaxDecomposeDepth = 2;
 
     private static void WriteDecomposedJson(Utf8JsonWriter writer, DecomposedObject decomposed, int depth = 0)
     {
