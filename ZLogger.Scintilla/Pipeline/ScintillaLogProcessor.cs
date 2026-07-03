@@ -133,10 +133,22 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
     private bool TryWriteParameter(Utf8JsonWriter writer, IZLoggerEntry log, int index)
     {
         var value = log.GetParameterValue(index);
-        if (value is null || value is Exception || ParameterSpan.IsLeafType(value.GetType()))
+        if (value is null or Exception)
             return false;
 
+        var type = value.GetType();
         var key = log.GetParameterKeyAsString(index);
+
+        if (IsPythonnetType(type))
+        {
+            writer.WritePropertyName(string.IsNullOrEmpty(key) ? $"arg{index}" : key);
+            writer.WriteStringValue($"{type.FullName}: {value}");
+            return true;
+        }
+
+        if (ParameterSpan.IsLeafType(type))
+            return false;
+
         writer.WritePropertyName(string.IsNullOrEmpty(key) ? $"arg{index}" : key);
 
         if (value is System.Collections.IEnumerable enumerable)
@@ -319,6 +331,22 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
             properties[LogConstants.JsonBytes] = jsonBytes;
 
         return properties.Count == 0 ? LogEntry.EmptyProperties : properties;
+    }
+    
+    private static bool IsPythonnetType(Type? t)
+    {
+        while (t is not null)
+        {
+            if (IsPythonRuntimeType(t)) return true;
+            t = t.BaseType;
+        }
+        return false;
+        
+        static bool IsPythonRuntimeType(Type t)
+        {
+            var ns = t.Namespace;
+            return ns == "Python.Runtime" || (ns?.StartsWith("Python.Runtime.", StringComparison.Ordinal) ?? false);
+        }
     }
 
     private static void AddScopeProperties(LogScopeState scopeState, Dictionary<string, object?> properties)
