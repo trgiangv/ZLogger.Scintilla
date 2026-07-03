@@ -13,13 +13,13 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Serilog.Sinks.RichTextBox.WinForms.Colored" Version="3.2.0" />
-        <PackageReference Include="Serilog" Version="4.2.0"/>
-        <PackageReference Include="BenchmarkDotNet" Version="0.15.8"/>
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.5"/>
-        <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.5"/>
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5"/>
-        <PackageReference Include="Zlogger" Version="2.5.10"/>
+        <PackageReference Include="Serilog.Sinks.RichTextBox.WinForms.Colored"/>
+        <PackageReference Include="Serilog"/>
+        <PackageReference Include="BenchmarkDotNet"/>
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions"/>
+        <PackageReference Include="Microsoft.Extensions.Logging"/>
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions"/>
+        <PackageReference Include="Zlogger"/>
     </ItemGroup>
 
 </Project>
