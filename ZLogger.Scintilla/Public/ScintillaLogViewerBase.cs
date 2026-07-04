@@ -172,6 +172,8 @@ public abstract class ScintillaLogViewerBase : IDisposable
     {
         _processor = processor;
         processor.SetJsonDepth(_options.JsonDecomposeDepth);
+        processor.SetCollectionLimit(_options.JsonDecomposeMaxCollection);
+        processor.SetCustomSerializer(_options.CustomSerializer);
     }
 
     public void SetFilter(LogLevel minimumLevel)

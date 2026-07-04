@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using ZLogger.Scintilla.Public;
 namespace ZLogger.Scintilla.Rendering;
 
 /// <summary>
@@ -25,6 +26,7 @@ namespace ZLogger.Scintilla.Rendering;
 /// </remarks>
 internal sealed class ScintillaLogFormatter : IZLoggerFormatter
 {
+    internal volatile ICustomSerializer? ParameterSerializer;
     private static ReadOnlySpan<byte> OpenBracket      => "["u8;
     private static ReadOnlySpan<byte> CloseBracketSpace => "] "u8;
     private static ReadOnlySpan<byte> Space            => " "u8;
@@ -66,7 +68,7 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         }
     }
 
-    private static void WriteMessageBody(IBufferWriter<byte> writer, IZLoggerEntry entry)
+    private void WriteMessageBody(IBufferWriter<byte> writer, IZLoggerEntry entry)
     {
         if (entry.ParameterCount == 0)
         {
@@ -81,7 +83,7 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
             SubstitutePlaceholders(writer, entry, format);
     }
 
-    private static void SubstitutePlaceholders(IBufferWriter<byte> writer, IZLoggerEntry entry, string format)
+    private void SubstitutePlaceholders(IBufferWriter<byte> writer, IZLoggerEntry entry, string format)
     {
         var paramIdx = 0;
         var pos = 0;
@@ -115,11 +117,18 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         }
     }
 
-    private static string ResolveParameterText(IZLoggerEntry entry, int paramIdx)
+    private string ResolveParameterText(IZLoggerEntry entry, int paramIdx)
     {
         try
         {
-            return entry.GetParameterValue(paramIdx)?.ToString() ?? "null";
+            var value = entry.GetParameterValue(paramIdx);
+            if (value is null) return "null";
+
+            var serializer = ParameterSerializer;
+            if (serializer != null && serializer.CanSerialize(value.GetType()))
+                return serializer.FormatText(value) ?? "null";
+
+            return value.ToString();
         }
         catch
         {
@@ -127,7 +136,7 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         }
     }
 
-    private static void WriteFallbackValues(IBufferWriter<byte> writer, IZLoggerEntry entry)
+    private void WriteFallbackValues(IBufferWriter<byte> writer, IZLoggerEntry entry)
     {
         for (var i = 0; i < entry.ParameterCount; i++)
         {

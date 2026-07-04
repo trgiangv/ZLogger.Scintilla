@@ -17,6 +17,8 @@ internal static class LogConstants
 
     public const int DefaultMaxLines = 50_000;
     public const int DefaultMaxHistoryEntries = 50_000;
+    public const int DefaultDecomposeDepth = 2;
+    public const int DefaultDecomposeCollection = 20;
     public const int DefaultMaxTokenRanges = 50_000;
 
     public const int StyleRangesCapacity = 1024;

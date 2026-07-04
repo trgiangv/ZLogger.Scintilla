@@ -38,7 +38,16 @@ public sealed class ScintillaOptions
     public Action<Exception>? EnrichmentErrorSink { get; private set; }
 
     /// <summary>Max recursion depth for JSON object decomposition in pretty-print mode. Default 2.</summary>
-    public int JsonDecomposeDepth { get; private set; } = 2;
+    public int JsonDecomposeDepth { get; private set; } = LogConstants.DefaultDecomposeDepth;
+
+    /// <summary>Max items to serialize per collection/iterable in pretty-print JSON. Default 50.</summary>
+    public int JsonDecomposeMaxCollection { get; private set; } = LogConstants.DefaultDecomposeCollection;
+
+    /// <summary>
+    /// Optional serializer for parameter types that cannot be safely decomposed
+    /// by the default reflection-based pipeline (e.g. Python objects).
+    /// </summary>
+    public ICustomSerializer? CustomSerializer { get; private set; }
 
     /// <summary>Configures the ingest channel.</summary>
     public ScintillaOptions Channel(
@@ -117,9 +126,30 @@ public sealed class ScintillaOptions
     /// Higher values produce more detailed JSON but risk performance with deeply nested or circular objects.
     /// Default is 2.
     /// </summary>
-    public ScintillaOptions JsonDepth(int depth)
+    public ScintillaOptions WithJsonDepth(int depth)
     {
-        JsonDecomposeDepth = depth > 0 ? depth : 2;
+        JsonDecomposeDepth = depth > 0 ? depth : LogConstants.DefaultDecomposeDepth;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the max number of items to serialize per collection in pretty-print JSON.
+    /// Higher values show more data but risk performance with large collections.
+    /// Default is 50.
+    /// </summary>
+    public ScintillaOptions WithCollectionLimit(int maxItems)
+    {
+        JsonDecomposeMaxCollection = maxItems > 0 ? maxItems : LogConstants.DefaultDecomposeCollection;
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a custom parameter serializer for types that the default
+    /// <c>LookupComposer</c> decomposition cannot safely process.
+    /// </summary>
+    public ScintillaOptions WithCustomSerializer(ICustomSerializer serializer)
+    {
+        CustomSerializer = serializer;
         return this;
     }
 }
