@@ -4,6 +4,14 @@ All notable changes to ZLogger.Scintilla are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.8] - 2026-07-04
+
+### Added
+- `ICustomSerializer` — to override default serialization behavior
+
+### Changed
+- #**Max collection items** and **Max decompose depth** configurable at runtime in `ScintillaOptions`
+
 ---
 
 ## [0.0.7] - 2026-07-03
