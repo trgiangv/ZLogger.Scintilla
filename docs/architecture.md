@@ -373,6 +373,7 @@ flowchart LR
 ```
 
 - **LookupEngine** is a git submodule at `external/LookupEngine` — provides object decomposition for pretty JSON
-- On **Release** builds, `ILRepack.targets` merges `LookupEngine.dll` + `LookupEngine.Abstractions.dll` into `ZLogger.Scintilla.dll`
+- On **Release** builds, `ILRepack.targets` merges copy-local project outputs (not NuGet package DLLs) into `ZLogger.Scintilla.dll`
 - The NuGet package ships a **single assembly** with no external LookupEngine dependency
-- LookupEngine types remain public in the merged assembly (not internalized)
+- Merged project types remain public (`ILRepackInternalize=false`)
+- Polyfill is net48-only; `Directory.Build.targets` strips it on modern TFMs so the merge does not embed `Polyfills.Polyfill`

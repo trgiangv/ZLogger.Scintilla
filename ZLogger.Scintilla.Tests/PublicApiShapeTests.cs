@@ -103,6 +103,7 @@ public sealed class PublicApiShapeTests
 
         var expected = new[]
         {
+            nameof(ICustomSerializer),
             nameof(ILogColorizer),
             nameof(ILinkifier),
             nameof(IScintillaTheme),

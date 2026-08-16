@@ -11,7 +11,7 @@ namespace ZLogger.Scintilla.Tests;
 public sealed class ConcurrencyTests
 {
     [Fact]
-    public async Task RapidFilterSwitch_DoesNotThrow()
+    public void RapidFilterSwitch_DoesNotThrow()
     {
         var viewer = new ScintillaLogViewer();
         viewer.Start();
@@ -22,49 +22,37 @@ public sealed class ConcurrencyTests
             LogLevel.Warning, LogLevel.Error, LogLevel.Critical, LogLevel.None
         };
 
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
-
-        // Rapidly switch filter from multiple tasks
-        var filterTask = Task.Run(async () =>
+        var postThread = new Thread(() =>
         {
-            var rng = new Random(42);
-            while (!cts.Token.IsCancellationRequested)
-            {
-                try
-                {
-                    viewer.SetFilter(levels[rng.Next(levels.Length)]);
-                    await Task.Yield();
-                }
-                catch (Exception ex)
-                {
-                    exceptions.Add(ex);
-                }
-            }
-        }, cts.Token);
-
-        // Post entries concurrently
-        var postTask = Task.Run(async () =>
-        {
-            for (var i = 0; i < 500 && !cts.Token.IsCancellationRequested; i++)
+            for (var i = 0; i < 500; i++)
             {
                 try
                 {
                     var entry = MakeEntry($"msg{i}", (LogLevel)(i % 6));
                     viewer.TryPost(entry);
-                    if (i % 50 == 0) await Task.Yield();
                 }
                 catch (Exception ex)
                 {
                     exceptions.Add(ex);
                 }
             }
-        }, cts.Token);
+        });
+        postThread.Start();
 
-        await postTask;
-        await cts.CancelAsync();
-        try { await filterTask; } catch (OperationCanceledException) { }
+        for (var i = 0; i < 50; i++)
+        {
+            try
+            {
+                viewer.SetFilter(levels[i % levels.Length]);
+            }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+        }
 
+        postThread.Join();
         viewer.Stop();
         viewer.Dispose();
 

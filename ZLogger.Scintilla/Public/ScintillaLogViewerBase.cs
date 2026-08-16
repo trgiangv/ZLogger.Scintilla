@@ -28,7 +28,7 @@ public abstract class ScintillaLogViewerBase : IDisposable
     private readonly LogHistoryBuffer _history;
     private readonly ConcurrentQueue<PreparedBatch> _renderQueue = new();
     private readonly List<LogEntry> _filterBuffer;
-    private readonly Lock _stateGate = new();
+    private readonly object _stateGate = new();
     private readonly SearchCoordinator _search;
     private readonly bool _autoScroll;
     private ScintillaLogProcessor? _processor;
@@ -63,12 +63,17 @@ public abstract class ScintillaLogViewerBase : IDisposable
         _dispatchInvoke = action =>
         {
             if (ScintillaControl.IsDisposed) return;
+            if (!ScintillaControl.IsHandleCreated)
+            {
+                if (!ScintillaControl.InvokeRequired) action();
+                return;
+            }
             if (!ScintillaControl.InvokeRequired) action();
             else ScintillaControl.Invoke(action);
         };
         _dispatchBeginInvoke = action =>
         {
-            if (ScintillaControl.IsDisposed) return;
+            if (ScintillaControl.IsDisposed || !ScintillaControl.IsHandleCreated) return;
             ScintillaControl.BeginInvoke(action);
         };
 
@@ -279,6 +284,8 @@ public abstract class ScintillaLogViewerBase : IDisposable
     {
         var currentVersion = Interlocked.Increment(ref _filterVersion);
         var clearEpoch = Volatile.Read(ref _clearEpoch);
+        if (!ScintillaControl.IsHandleCreated)
+            return;
         var nextCts = new CancellationTokenSource();
         var previousCts = Interlocked.Exchange(ref _filterCts, nextCts);
         previousCts?.Cancel();
@@ -422,6 +429,11 @@ public abstract class ScintillaLogViewerBase : IDisposable
     {
         _renderQueue.Enqueue(batch);
         if (Interlocked.Exchange(ref _uiDrainScheduled, 1) == 1) return;
+        if (!ScintillaControl.IsHandleCreated)
+        {
+            Interlocked.Exchange(ref _uiDrainScheduled, 0);
+            return;
+        }
         _dispatchBeginInvoke(DrainRenderQueue);
     }
 
@@ -533,6 +545,8 @@ public abstract class ScintillaLogViewerBase : IDisposable
     {
         ScintillaControl.HandleCreated -= OnHandleCreatedApplyStyles;
         _document.ApplyThemeStyles(_renderStrategy, _currentTheme);
+        if (Interlocked.Exchange(ref _uiDrainScheduled, 1) == 0)
+            _dispatchBeginInvoke(DrainRenderQueue);
     }
 
     private void ApplyNativeThemeToControl()

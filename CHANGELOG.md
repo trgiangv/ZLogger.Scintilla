@@ -4,6 +4,17 @@ All notable changes to ZLogger.Scintilla are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.0.9] - 2026-08-16
+
+### Changed
+- Scintilla5.NET 7.0.0 (native Scintilla 5.6.1 / Lexilla 5.4.8)
+- Added `net10.0-windows` target framework
+- LookupEngine submodule updated to latest main (includes member revaluation 2.0.6+)
+- Polyfill is referenced only on net48; Directory.Build.targets strips it on modern TFMs so ILRepack/CoreCLR 10 does not smash `Polyfills.Polyfill`
+- ILRepack merges copy-local project outputs via `IsRepackable` (no hardcoded assembly names)
+
+---
+
 ## [0.0.8] - 2026-07-04
 
 ### Added

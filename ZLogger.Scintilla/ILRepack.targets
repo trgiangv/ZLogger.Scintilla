@@ -1,27 +1,57 @@
-<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="UTF-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
-    <Target Name="ILRepacker" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <PropertyGroup>
+        <!-- Opt-in merge. Needs PackageReference ILRepack.Lib.MSBuild.Task on the csproj. -->
+        <IsRepackable Condition="'$(IsRepackable)' == ''">false</IsRepackable>
+        <ILRepackInternalize Condition="'$(ILRepackInternalize)' == ''">false</ILRepackInternalize>
+        <ILRepackUnion Condition="'$(ILRepackUnion)' == ''">false</ILRepackUnion>
+        <ILRepackParallel Condition="'$(ILRepackParallel)' == ''">false</ILRepackParallel>
+    </PropertyGroup>
+
+    <!-- Merge copy-local project outputs into the primary assembly. NuGet package
+         DLLs stay beside the output (PackageReference dependencies of the nupkg). -->
+    <Target Name="RepackAssemblies"
+            AfterTargets="Build"
+            Condition="'$(IsRepackable)' == 'true' AND '$(TargetFramework)' != '' AND '$(TargetPath)' != ''">
+
         <ItemGroup>
-            <InputAssemblies Include="$(TargetPath)"/>
-            <InputAssemblies Include="$(TargetDir)LookupEngine.dll" Condition="Exists('$(TargetDir)LookupEngine.dll')"/>
-            <InputAssemblies Include="$(TargetDir)LookupEngine.Abstractions.dll" Condition="Exists('$(TargetDir)LookupEngine.Abstractions.dll')"/>
+            <_ILRepackExcludeNames Include="$(RepackBinariesExcludes.Split(';'))"
+                                   Condition="'$(RepackBinariesExcludes)' != ''"/>
+            <_ILRepackExclude Include="$(TargetDir)%(_ILRepackExcludeNames.Identity)"/>
+            <_ILRepackCopyLocal Include="@(_ResolvedProjectReferencePaths)"
+                                Condition="'%(Extension)' == '.dll' AND '%(Filename)' != '$(AssemblyName)'"/>
+            <_ILRepackCopyLocal Include="@(ReferenceCopyLocalPaths)"
+                                Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.dll'
+                                           AND '%(ReferenceCopyLocalPaths.NuGetPackageId)' == ''
+                                           AND '%(ReferenceCopyLocalPaths.Filename)' != '$(AssemblyName)'"/>
+            <_ILRepackInput Include="$(TargetPath)"/>
+            <_ILRepackCandidate Include="$(TargetDir)%(_ILRepackCopyLocal.Filename)%(_ILRepackCopyLocal.Extension)"
+                                Exclude="@(_ILRepackExclude);$(TargetPath)"
+                                Condition="Exists('$(TargetDir)%(_ILRepackCopyLocal.Filename)%(_ILRepackCopyLocal.Extension)')"/>
+            <_ILRepackInput Include="@(_ILRepackCandidate->Distinct())"/>
         </ItemGroup>
 
+        <Message Text="Repacking $(TargetPath) inputs=@(_ILRepackInput)" Importance="high"/>
+
         <ILRepack
-            Internalize="false"
+            Internalize="$(ILRepackInternalize)"
+            Union="$(ILRepackUnion)"
             AllowDuplicateResources="false"
             DebugInfo="true"
-            InputAssemblies="@(InputAssemblies)"
+            InputAssemblies="@(_ILRepackInput)"
             LibraryPath="$(TargetDir)"
             OutputFile="$(TargetPath)"
-            Parallel="true"
+            Parallel="$(ILRepackParallel)"
             TargetKind="SameAsPrimaryAssembly"/>
 
-        <Delete Files="$(TargetDir)LookupEngine.dll" Condition="Exists('$(TargetDir)LookupEngine.dll')"/>
-        <Delete Files="$(TargetDir)LookupEngine.Abstractions.dll" Condition="Exists('$(TargetDir)LookupEngine.Abstractions.dll')"/>
-        <Delete Files="$(TargetDir)LookupEngine.pdb" Condition="Exists('$(TargetDir)LookupEngine.pdb')"/>
-        <Delete Files="$(TargetDir)LookupEngine.Abstractions.pdb" Condition="Exists('$(TargetDir)LookupEngine.Abstractions.pdb')"/>
+        <ItemGroup>
+            <_ILRepackedFiles Include="@(_ILRepackInput->'%(RootDir)%(Directory)%(Filename).dll')"
+                              Condition="%(Filename) != $(AssemblyName)"/>
+            <_ILRepackedFiles Include="@(_ILRepackInput->'%(RootDir)%(Directory)%(Filename).pdb')"
+                              Condition="%(Filename) != $(AssemblyName)"/>
+        </ItemGroup>
+        <Delete Files="@(_ILRepackedFiles)"/>
     </Target>
 
 </Project>

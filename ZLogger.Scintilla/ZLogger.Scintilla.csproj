@@ -1,17 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+        <TargetFrameworks>net48;net8.0-windows;net10.0-windows</TargetFrameworks>
         <UseWPF>true</UseWPF>
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <UseWindowsForms>true</UseWindowsForms>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <IsRepackable Condition="'$(Configuration)' == 'Release'">true</IsRepackable>
+        <ILRepackInternalize>false</ILRepackInternalize>
+        <ILRepackUnion>false</ILRepackUnion>
+        <ILRepackParallel>false</ILRepackParallel>
     </PropertyGroup>
 
     <PropertyGroup>
         <PackageId>ZLogger.Scintilla</PackageId>
-        <Version>0.0.8</Version>
+        <Version>0.0.9</Version>
         <Authors>trgiangv</Authors>
         <Description>High-throughput, syntax-highlighted log viewer for WinForms and WPF, built on Scintilla.NET and ZLogger.</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -29,7 +33,7 @@
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions"/>
         <PackageReference Include="Microsoft.Extensions.Logging"/>
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions"/>
-        <PackageReference Include="Polyfill">
+        <PackageReference Include="Polyfill" Condition="$(TargetFramework.StartsWith('net4'))">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
