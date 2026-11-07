@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
+// ReSharper disable ForCanBeConvertedToForeach
+// ReSharper disable ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
 
 namespace ZLogger.Scintilla.Pipeline;
 

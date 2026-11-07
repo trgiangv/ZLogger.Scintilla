@@ -17,7 +17,7 @@ internal static class RenderingChars
         SearchValues.Create(Encoding.ASCII.GetBytes(TokenSeparators));
 #endif
 
-    public static bool IsTokenSeparator(byte value) => value < 0x80 && TokenSeparators.IndexOf((char)value) >= 0;
+    public static bool IsTokenSeparator(byte value) => value < 0x80 && TokenSeparators.Contains((char)value);
 
     public static int IndexOfTokenSeparator(ReadOnlySpan<byte> text)
     {

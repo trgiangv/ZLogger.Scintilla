@@ -11,9 +11,8 @@ namespace ZLogger.Scintilla.Services;
 /// Regular expressions use the C++11 engine (ECMAScript grammar) for navigation, highlighting and counting
 /// alike, so all three always agree. Must be called on the UI thread.
 /// </summary>
-internal sealed class ScintillaSearchService
+internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
 {
-    private readonly ScintillaNET.Scintilla _scintilla;
     private string? _activePattern;
     private byte[] _patternBytes = [];
     private int _activeFlags;
@@ -31,11 +30,6 @@ internal sealed class ScintillaSearchService
     private bool _hasScope;
     private int _scopeStart;
     private int _scopeEnd;
-
-    public ScintillaSearchService(ScintillaNET.Scintilla scintilla)
-    {
-        _scintilla = scintilla;
-    }
 
     public bool HasActiveSearch { get; private set; }
 
@@ -315,7 +309,7 @@ internal sealed class ScintillaSearchService
         Send(LogConstants.SciSetTargetRange, start, end);
         int position;
         fixed (byte* pattern = _patternBytes)
-            position = (int)_scintilla.DirectMessage(LogConstants.SciSearchInTarget, (IntPtr)_patternBytes.Length, (IntPtr)pattern);
+            position = (int)scintilla.DirectMessage(LogConstants.SciSearchInTarget, (IntPtr)_patternBytes.Length, (IntPtr)pattern);
 
         if (position == -2)
         {
@@ -395,7 +389,7 @@ internal sealed class ScintillaSearchService
 
     private void ConfigureCurrentMatchIndicator(IScintillaTheme theme)
     {
-        var indicator = _scintilla.Indicators[LogConstants.CurrentMatchIndicatorId];
+        var indicator = scintilla.Indicators[LogConstants.CurrentMatchIndicatorId];
         indicator.Style = IndicatorStyle.RoundBox;
         indicator.ForeColor = theme.IsDark ? LogConstants.DarkCurrentMatchColor : LogConstants.LightCurrentMatchColor;
         indicator.Under = true;
@@ -405,7 +399,7 @@ internal sealed class ScintillaSearchService
 
     private void ConfigureScopeIndicator(IScintillaTheme theme)
     {
-        var indicator = _scintilla.Indicators[LogConstants.SearchScopeIndicatorId];
+        var indicator = scintilla.Indicators[LogConstants.SearchScopeIndicatorId];
         indicator.Style = IndicatorStyle.FullBox;
         indicator.ForeColor = theme.Foreground;
         indicator.Under = true;
@@ -415,7 +409,7 @@ internal sealed class ScintillaSearchService
 
     private void ConfigureSearchIndicator(IScintillaTheme theme)
     {
-        var indicator = _scintilla.Indicators[LogConstants.SearchIndicatorId];
+        var indicator = scintilla.Indicators[LogConstants.SearchIndicatorId];
         indicator.Style = IndicatorStyle.RoundBox;
         indicator.ForeColor = theme.SearchHighlight;
         indicator.Under = true;
@@ -493,5 +487,5 @@ internal sealed class ScintillaSearchService
     }
 
     private long Send(int message, long wParam = 0, long lParam = 0) =>
-        (long)_scintilla.DirectMessage(message, (IntPtr)wParam, (IntPtr)lParam);
+        (long)scintilla.DirectMessage(message, (IntPtr)wParam, (IntPtr)lParam);
 }
