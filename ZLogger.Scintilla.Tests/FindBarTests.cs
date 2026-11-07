@@ -129,6 +129,32 @@ public sealed class FindBarTests
         Assert.IsTrue(live.WaitFor(() => live.Viewer.FindBar.CanFindInSelection), "Still disabled with a range selected.");
     }
 
+    /// <summary>A Revit dockable pane can be as narrow as 550px; the bar must fit and leave most of the log visible.</summary>
+    [TestMethod]
+    public async Task FindBar_FitsANarrowPane()
+    {
+        using var live = new LiveViewer(width: 550);
+        for (var i = 0; i < 12_000; i++)
+            live.Logger.LogInformation("needle {I}", i);
+        live.WaitForLine("needle 11999");
+        live.WaitForIdle();
+        var bar = live.Viewer.FindBar;
+
+        live.Ui(() => PressKey(live.Control, Keys.F3));
+        var (empty, client) = live.Ui(() => (bar.Bounds, live.Control.ClientSize));
+        Assert.IsGreaterThanOrEqualTo(0, empty.Left, "The bar starts outside the pane.");
+        Assert.IsLessThanOrEqualTo(client.Width, empty.Right, "The bar runs past the pane.");
+        Assert.IsLessThanOrEqualTo(client.Width * 2 / 3, empty.Width, $"The bar takes {empty.Width} of {client.Width}px.");
+
+        // A five-digit count widens the bar to the left; the buttons on the right stay put.
+        live.Ui(() => bar.Controls.OfType<TextBox>().Single().Text = "needle");
+        Assert.IsTrue(live.WaitFor(() => bar.Bounds.Width > empty.Width), "The bar did not make room for the count.");
+        await Task.Delay(200);
+        var counted = live.Ui(() => bar.Bounds);
+        Assert.AreEqual(empty.Right, counted.Right, "The bar's right edge moved.");
+        Assert.IsGreaterThanOrEqualTo(0, counted.Left, "The bar starts outside the pane.");
+    }
+
     /// <summary>A thread has one caret. Selecting a match must not move it out of the text box being typed in.</summary>
     [TestMethod]
     public void FindBar_KeepsTheCaretWhereTheUserTypes()

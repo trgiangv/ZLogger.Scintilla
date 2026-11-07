@@ -26,13 +26,15 @@ internal sealed class LogFindBar : Control
     private const int FieldHeight = 24;
     private const int FieldRadius = 2;
     private const int FieldTextInset = 6;
-    private const int MaxFieldWidth = 300;
-    private const int MinFieldWidth = 150;
-    private const int ToggleSize = 20;
+    // Sized for narrow hosts such as a Revit dockable pane, 550px at the least: the bar stays about two thirds
+    // of that wide, and the input gives up width before anything else does.
+    private const int MaxFieldWidth = 180;
+    private const int MinFieldWidth = 110;
+    private const int ToggleSize = 18;
     private const int ToggleGap = 1;
     private const int ToggleInset = 2;
-    private const int CountWidth = 88;
-    private const int ButtonSize = 24;
+    private const int CountPadding = 4;
+    private const int ButtonSize = 22;
     private const int ButtonRadius = 3;
     private const int ToggleRadius = 3;
     private const int ButtonGap = 1;
@@ -247,7 +249,7 @@ internal sealed class LogFindBar : Control
             CancelCount();
             _search.ClearSearch();
             _total = 0;
-            Invalidate();
+            RefreshCount();
             return;
         }
 
@@ -263,7 +265,7 @@ internal sealed class LogFindBar : Control
 
         _total = -1;
         StartCount();
-        Invalidate();
+        RefreshCount();
     }
 
     private void Navigate(bool forward)
@@ -275,7 +277,7 @@ internal sealed class LogFindBar : Control
 
         _current = (forward ? _search.FindNext() : _search.FindPrevious()).Current;
         RememberOwnSelection();
-        Invalidate();
+        RefreshCount();
     }
 
     private void ToggleOption(SearchOptions option)
@@ -322,7 +324,7 @@ internal sealed class LogFindBar : Control
             StartCount();
         }
 
-        Invalidate();
+        RefreshCount();
     }
 
     private void OnScopeLost()
@@ -348,7 +350,7 @@ internal sealed class LogFindBar : Control
             _total = total;
             _countedLength = length;
             _current = _search.CurrentPosition(total).Current;
-            Invalidate();
+            RefreshCount();
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or InvalidOperationException)
         {
@@ -390,7 +392,7 @@ internal sealed class LogFindBar : Control
         if (current == _current)
             return;
         _current = current;
-        Invalidate();
+        RefreshCount();
     }
 
     /// <summary>
@@ -421,6 +423,24 @@ internal sealed class LogFindBar : Control
             Arrange();
     }
 
+    /// <summary>Wide enough for the current count, and never narrower than "No results".</summary>
+    private int CountWidth()
+    {
+        const TextFormatFlags flags = TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
+        var text = TextRenderer.MeasureText(CountText, _textFont, Size.Empty, flags).Width;
+        var floor = TextRenderer.MeasureText(NoResults, _textFont, Size.Empty, flags).Width;
+        return Math.Max(text, floor) + Scale(CountPadding);
+    }
+
+    /// <summary>Repaints after the count changed, laying the bar out again when the count needs another width.</summary>
+    private void RefreshCount()
+    {
+        if (Visible && CountWidth() != _count.Width)
+            Arrange();
+        else
+            Invalidate();
+    }
+
     private void Arrange()
     {
         _scale = _editor.DeviceDpi / 96f;
@@ -428,7 +448,8 @@ internal sealed class LogFindBar : Control
         var gap = Scale(GroupGap);
         var button = Scale(ButtonSize);
         var buttonGap = Scale(ButtonGap);
-        var fixedWidth = 2 * padding + 3 * gap + Scale(CountWidth) + 4 * button + 2 * buttonGap;
+        var countWidth = CountWidth();
+        var fixedWidth = 2 * padding + 3 * gap + countWidth + 4 * button + 2 * buttonGap;
         var available = _editor.ClientSize.Width - 2 * Scale(EdgeMargin) - fixedWidth;
         var fieldWidth = Math.Max(Scale(MinFieldWidth), Math.Min(Scale(MaxFieldWidth), available));
 
@@ -452,15 +473,16 @@ internal sealed class LogFindBar : Control
         _regex = new Rectangle(_wholeWord.Right + toggleGap, toggleTop, toggle, toggle);
 
         x = _field.Right + gap;
-        _count = new Rectangle(x, top, Scale(CountWidth), fieldHeight);
+        _count = new Rectangle(x, top, countWidth, fieldHeight);
+        var buttonTop = _card.Top + (_card.Height - button) / 2;
         x = _count.Right + gap;
-        _previous = new Rectangle(x, top, button, button);
+        _previous = new Rectangle(x, buttonTop, button, button);
         x = _previous.Right + buttonGap;
-        _next = new Rectangle(x, top, button, button);
+        _next = new Rectangle(x, buttonTop, button, button);
         x = _next.Right + gap;
-        _inSelection = new Rectangle(x, top, button, button);
+        _inSelection = new Rectangle(x, buttonTop, button, button);
         x = _inSelection.Right + buttonGap;
-        _close = new Rectangle(x, top, button, button);
+        _close = new Rectangle(x, buttonTop, button, button);
 
         var inset = Scale(FieldTextInset);
         var textHeight = _input.PreferredHeight;
@@ -587,8 +609,10 @@ internal sealed class LogFindBar : Control
 
     private bool HasNoResults => _input.TextLength > 0 && _total == 0;
 
+    private const string NoResults = "No results";
+
     private string CountText =>
-        _input.TextLength == 0 || _total == 0 ? "No results"
+        _input.TextLength == 0 || _total == 0 ? NoResults
         : _total < 0 ? (_current > 0 ? $"{_current:n0} of ?" : "…")
         : _current > 0 ? $"{_current:n0} of {_total:n0}"
         : $"? of {_total:n0}";
