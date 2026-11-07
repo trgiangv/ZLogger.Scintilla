@@ -27,6 +27,11 @@ internal sealed class ScintillaSearchService
     private long _trimmedBytes;
     private bool _patternInvalid;
 
+    // Find in selection: the range searches are limited to, in live byte positions.
+    private bool _hasScope;
+    private int _scopeStart;
+    private int _scopeEnd;
+
     public ScintillaSearchService(ScintillaNET.Scintilla scintilla)
     {
         _scintilla = scintilla;
@@ -34,18 +39,21 @@ internal sealed class ScintillaSearchService
 
     public bool HasActiveSearch { get; private set; }
 
-    public SearchMatch FindNext(string pattern, bool matchCase, bool useRegex)
+    /// <summary>Raised when the document is replaced, which also ends a find in selection.</summary>
+    public event Action? ScopeLost;
+
+    public SearchMatch FindNext(string pattern, SearchOptions options)
     {
-        SetActiveSearch(pattern, matchCase, useRegex);
-        var length = DocumentLength;
-        if (!HasActiveSearch || length == 0)
+        SetActiveSearch(pattern, options);
+        var (lo, hi) = SearchBounds();
+        if (!HasActiveSearch || hi <= lo)
             return SearchMatch.NotFound;
 
         ApplySearchFlags();
-        var from = (int)Send(LogConstants.SciGetSelectionEnd);
-        var found = FindForward(from, length);
-        if (found.Start < 0 && from > 0)
-            found = FindForward(0, from);
+        var from = Clamp((int)Send(LogConstants.SciGetSelectionEnd), lo, hi);
+        var found = FindForward(from, hi);
+        if (found.Start < 0 && from > lo)
+            found = FindForward(lo, from);
 
         if (found.Start >= 0)
             Send(LogConstants.SciSetSel, found.Start, found.End);
@@ -53,20 +61,20 @@ internal sealed class ScintillaSearchService
         return FinalizeFind(found);
     }
 
-    public SearchMatch FindPrevious(string pattern, bool matchCase, bool useRegex)
+    public SearchMatch FindPrevious(string pattern, SearchOptions options)
     {
-        SetActiveSearch(pattern, matchCase, useRegex);
-        var length = DocumentLength;
-        if (!HasActiveSearch || length == 0)
+        SetActiveSearch(pattern, options);
+        var (lo, hi) = SearchBounds();
+        if (!HasActiveSearch || hi <= lo)
             return SearchMatch.NotFound;
 
         ApplySearchFlags();
-        var from = (int)Send(LogConstants.SciGetSelectionStart);
+        var from = Clamp((int)Send(LogConstants.SciGetSelectionStart), lo, hi);
 
         // A target that runs backwards makes Scintilla return the last match in the range.
-        var found = FindOnce(from, 0);
-        if (found.Start < 0 && from < length)
-            found = FindOnce(length, from);
+        var found = FindOnce(from, lo);
+        if (found.Start < 0 && from < hi)
+            found = FindOnce(hi, from);
 
         if (found.Start >= 0)
             Send(LogConstants.SciSetSel, found.End, found.Start);
@@ -76,15 +84,23 @@ internal sealed class ScintillaSearchService
 
     private SearchMatch FinalizeFind((int Start, int End) found)
     {
+        // The selection alone hardly shows while the find bar has the focus, so the match gets its own mark.
+        ClearCurrentMatch();
+        if (found.Start >= 0)
+        {
+            Send(LogConstants.SciSetIndicatorCurrent, LogConstants.CurrentMatchIndicatorId);
+            Send(LogConstants.SciIndicatorFillRange, found.Start, found.End - found.Start);
+        }
+
         HighlightVisibleMatches();
         return found.Start < 0
             ? SearchMatch.NotFound
             : new SearchMatch(true, RankOf(found.Start));
     }
 
-    public void HighlightSearch(string pattern, bool matchCase, bool useRegex)
+    public void HighlightSearch(string pattern, SearchOptions options)
     {
-        SetActiveSearch(pattern, matchCase, useRegex);
+        SetActiveSearch(pattern, options);
         RefreshHighlightIfActive();
     }
 
@@ -99,8 +115,8 @@ internal sealed class ScintillaSearchService
     /// <summary>Scans a bounded part of the document. Returns true with the match count when the scan is complete.</summary>
     public bool CountSlice(int budgetMs, out int count)
     {
-        var length = DocumentLength;
-        if (!HasActiveSearch || _patternInvalid || length == 0)
+        var (lo, hi) = SearchBounds();
+        if (!HasActiveSearch || _patternInvalid || hi <= lo)
         {
             count = LiveMatchCount;
             return true;
@@ -108,35 +124,83 @@ internal sealed class ScintillaSearchService
 
         ApplySearchFlags();
         var deadline = Stopwatch.GetTimestamp() + budgetMs * Stopwatch.Frequency / 1000;
-        var complete = ScanInSlices(length, deadline);
+        var complete = ScanInSlices(lo, hi, deadline);
         count = LiveMatchCount;
         return complete;
     }
 
     /// <summary>Scans a few lines at a time until the end or the deadline. Returns false if the deadline came first.</summary>
-    private bool ScanInSlices(int length, long deadline)
+    private bool ScanInSlices(int lo, int hi, long deadline)
     {
-        while (_scannedTo < length)
+        _scannedTo = Math.Max(_scannedTo, lo);
+        while (_scannedTo < hi)
         {
             var line = (int)Send(LogConstants.SciLineFromPosition, _scannedTo);
-            var sliceEnd = (int)Send(LogConstants.SciGetLineEndPosition, line + LogConstants.CountSliceLines);
+            var sliceEnd = Math.Min(hi, (int)Send(LogConstants.SciGetLineEndPosition, line + LogConstants.CountSliceLines));
             ScanTo(sliceEnd, deadline);
             if (_patternInvalid)
                 return true;
-            if (Stopwatch.GetTimestamp() >= deadline && _scannedTo < length)
+            if (Stopwatch.GetTimestamp() >= deadline && _scannedTo < hi)
                 return false;
 
             // The last line of the document has nothing after its line end.
-            if (sliceEnd >= length)
+            if (sliceEnd >= hi)
                 return true;
         }
 
         return true;
     }
 
+    /// <summary>
+    /// Limits every search to <paramref name="start"/>..<paramref name="end"/>, or lifts the limit when
+    /// <paramref name="enabled"/> is false. The range is marked with its own indicator.
+    /// </summary>
+    public void SetScope(bool enabled, int start = 0, int end = 0)
+    {
+        ClearScopeIndicator();
+        _hasScope = enabled;
+        _scopeStart = enabled ? Math.Max(0, start) : 0;
+        _scopeEnd = enabled ? Math.Max(_scopeStart, end) : 0;
+        ResetMatchIndex();
+
+        if (enabled && _scopeEnd > _scopeStart)
+        {
+            Send(LogConstants.SciSetIndicatorCurrent, LogConstants.SearchScopeIndicatorId);
+            Send(LogConstants.SciIndicatorFillRange, _scopeStart, _scopeEnd - _scopeStart);
+        }
+
+        RefreshHighlightIfActive();
+    }
+
+    /// <summary>
+    /// The 1-based rank of the match that is selected now, or 0 when the selection is not a match. Lets a count
+    /// that changes as logs arrive and leave keep the position it shows next to it right.
+    /// </summary>
+    public int RankOfSelection()
+    {
+        if (!HasActiveSearch || _patternInvalid)
+            return 0;
+
+        var start = (int)Send(LogConstants.SciGetSelectionStart);
+        var end = (int)Send(LogConstants.SciGetSelectionEnd);
+        var (lo, hi) = SearchBounds();
+        if (end <= start || start < lo || end > hi)
+            return 0;
+
+        var rank = RankOf(start);
+        var index = _firstLiveMatch + rank - 1;
+        return index < _matchIndex.Count && _matchIndex[index] == start + _trimmedBytes ? rank : 0;
+    }
+
     /// <summary>The start of the document was deleted: every position moved down by this many bytes.</summary>
     public void OnHeadTrimmed(int bytes)
     {
+        if (_hasScope)
+        {
+            _scopeStart = Math.Max(0, _scopeStart - bytes);
+            _scopeEnd = Math.Max(0, _scopeEnd - bytes);
+        }
+
         _trimmedBytes += bytes;
         _scannedTo = Math.Max(0, _scannedTo - bytes);
 
@@ -151,19 +215,44 @@ internal sealed class ScintillaSearchService
     }
 
     /// <summary>The whole document was replaced or emptied.</summary>
-    public void OnDocumentReset() => ResetMatchIndex();
+    public void OnDocumentReset()
+    {
+        ResetMatchIndex();
+        if (!_hasScope)
+            return;
+
+        // The range pointed into text that is gone.
+        _hasScope = false;
+        _scopeStart = 0;
+        _scopeEnd = 0;
+        ScopeLost?.Invoke();
+    }
 
     private int LiveMatchCount => _matchIndex.Count - _firstLiveMatch;
 
     private int DocumentLength => (int)Send(LogConstants.SciGetLength);
+
+    /// <summary>The range searches cover: the whole document, or the find-in-selection range.</summary>
+    private (int Lo, int Hi) SearchBounds()
+    {
+        var length = DocumentLength;
+        return _hasScope
+            ? (Math.Min(_scopeStart, length), Math.Min(_scopeEnd, length))
+            : (0, length);
+    }
+
+    private static int Clamp(int value, int min, int max) => value < min ? min : value > max ? max : value;
 
     /// <summary>Returns the 1-based rank of the match starting at <paramref name="position"/>.</summary>
     private int RankOf(int position)
     {
         if (position >= _scannedTo)
         {
+            var (lo, hi) = SearchBounds();
             ApplySearchFlags();
-            ScanTo((int)Send(LogConstants.SciGetLineEndPosition, Send(LogConstants.SciLineFromPosition, position)), long.MaxValue);
+            _scannedTo = Math.Max(_scannedTo, lo);
+            var lineEnd = (int)Send(LogConstants.SciGetLineEndPosition, Send(LogConstants.SciLineFromPosition, position));
+            ScanTo(Math.Min(lineEnd, hi), long.MaxValue);
         }
 
         var target = position + _trimmedBytes;
@@ -247,6 +336,9 @@ internal sealed class ScintillaSearchService
             return;
 
         var (start, end) = GetVisibleRange();
+        var (lo, hi) = SearchBounds();
+        start = Math.Max(start, lo);
+        end = Math.Min(end, hi);
         if (end <= start)
             return;
 
@@ -280,9 +372,45 @@ internal sealed class ScintillaSearchService
         Send(LogConstants.SciIndicatorClearRange, 0, DocumentLength);
     }
 
+    private void ClearCurrentMatch()
+    {
+        Send(LogConstants.SciSetIndicatorCurrent, LogConstants.CurrentMatchIndicatorId);
+        Send(LogConstants.SciIndicatorClearRange, 0, DocumentLength);
+        Send(LogConstants.SciSetIndicatorCurrent, LogConstants.SearchIndicatorId);
+    }
+
+    private void ClearScopeIndicator()
+    {
+        Send(LogConstants.SciSetIndicatorCurrent, LogConstants.SearchScopeIndicatorId);
+        Send(LogConstants.SciIndicatorClearRange, 0, DocumentLength);
+        Send(LogConstants.SciSetIndicatorCurrent, LogConstants.SearchIndicatorId);
+    }
+
     public void ApplyTheme(IScintillaTheme theme)
     {
         ConfigureSearchIndicator(theme);
+        ConfigureScopeIndicator(theme);
+        ConfigureCurrentMatchIndicator(theme);
+    }
+
+    private void ConfigureCurrentMatchIndicator(IScintillaTheme theme)
+    {
+        var indicator = _scintilla.Indicators[LogConstants.CurrentMatchIndicatorId];
+        indicator.Style = IndicatorStyle.RoundBox;
+        indicator.ForeColor = theme.IsDark ? LogConstants.DarkCurrentMatchColor : LogConstants.LightCurrentMatchColor;
+        indicator.Under = true;
+        indicator.Alpha = theme.IsDark ? LogConstants.DarkCurrentMatchAlpha : LogConstants.LightCurrentMatchAlpha;
+        indicator.OutlineAlpha = 255;
+    }
+
+    private void ConfigureScopeIndicator(IScintillaTheme theme)
+    {
+        var indicator = _scintilla.Indicators[LogConstants.SearchScopeIndicatorId];
+        indicator.Style = IndicatorStyle.FullBox;
+        indicator.ForeColor = theme.Foreground;
+        indicator.Under = true;
+        indicator.Alpha = theme.IsDark ? LogConstants.DarkScopeIndicatorAlpha : LogConstants.LightScopeIndicatorAlpha;
+        indicator.OutlineAlpha = 0;
     }
 
     private void ConfigureSearchIndicator(IScintillaTheme theme)
@@ -297,18 +425,25 @@ internal sealed class ScintillaSearchService
 
     private void ApplySearchFlags() => Send(LogConstants.SciSetSearchFlags, _activeFlags);
 
-    private static int BuildSearchFlags(bool matchCase, bool useRegex)
+    private static int BuildSearchFlags(SearchOptions options)
     {
         var flags = SearchFlags.None;
-        if (matchCase)
+        if ((options & SearchOptions.MatchCase) != 0)
             flags |= SearchFlags.MatchCase;
-        if (useRegex)
+        if ((options & SearchOptions.Regex) != 0)
             flags |= SearchFlags.Regex | SearchFlags.Cxx11Regex;
+        // Scintilla ignores whole word for regular expressions, which get word boundaries in the pattern instead.
+        else if ((options & SearchOptions.WholeWord) != 0)
+            flags |= SearchFlags.WholeWord;
 
         return (int)flags;
     }
 
-    private void SetActiveSearch(string pattern, bool matchCase, bool useRegex)
+    /// <summary>
+    /// Makes <paramref name="pattern"/> the pattern searches use. A count calls it too, because it must search for
+    /// its pattern even if nothing has been highlighted yet. An unchanged pattern keeps the matches found so far.
+    /// </summary>
+    public void SetActiveSearch(string pattern, SearchOptions options)
     {
         if (string.IsNullOrWhiteSpace(pattern))
         {
@@ -321,7 +456,10 @@ internal sealed class ScintillaSearchService
             return;
         }
 
-        var flags = BuildSearchFlags(matchCase, useRegex);
+        var flags = BuildSearchFlags(options);
+        if (options.HasFlag(SearchOptions.Regex | SearchOptions.WholeWord))
+            pattern = $@"\b(?:{pattern})\b";
+
         if (pattern != _activePattern || flags != _activeFlags)
         {
             _patternBytes = Encoding.UTF8.GetBytes(pattern);
@@ -333,11 +471,9 @@ internal sealed class ScintillaSearchService
         HasActiveSearch = true;
     }
 
-    /// <summary>Called by a count that must search for this pattern even if nothing has been highlighted yet.</summary>
-    public void EnsureActive(string pattern, bool matchCase, bool useRegex) => SetActiveSearch(pattern, matchCase, useRegex);
-
     private void ResetMatchIndex()
     {
+        ClearCurrentMatch();
         _matchIndex.Clear();
         _firstLiveMatch = 0;
         _scannedTo = 0;

@@ -7,23 +7,26 @@ internal sealed class SearchCoordinator(
     Action<Action> dispatch)
 {
     private string _pattern = string.Empty;
-    private bool _useRegex;
+    private SearchOptions _options;
     private int _totalMatches;
 
     private bool IsEmpty => string.IsNullOrEmpty(_pattern);
 
-    public void HighlightSearch(string pattern, bool useRegex = false)
+    public void HighlightSearch(string pattern, bool useRegex = false) =>
+        HighlightSearch(pattern, useRegex ? SearchOptions.Regex : SearchOptions.None);
+
+    public void HighlightSearch(string pattern, SearchOptions options)
     {
-        if (!UpdatePattern(pattern, useRegex))
+        if (!UpdatePattern(pattern, options))
             return;
 
-        dispatch(() => document.HighlightSearch(_pattern, matchCase: false, _useRegex));
+        dispatch(() => document.HighlightSearch(_pattern, _options));
     }
 
     public void ClearSearch()
     {
         ResetPattern();
-        dispatch(() => document.HighlightSearch(string.Empty, matchCase: false, useRegex: false));
+        dispatch(() => document.HighlightSearch(string.Empty, SearchOptions.None));
     }
 
     public SearchPosition FindNext() => ExecuteFind(forward: true);
@@ -40,7 +43,7 @@ internal sealed class SearchCoordinator(
             return 0;
         }
 
-        var total = await document.CountMatchesAsync(_pattern, matchCase: false, _useRegex, ct)
+        var total = await document.CountMatchesAsync(_pattern, _options, ct)
             .ConfigureAwait(false);
         _totalMatches = total;
         return total;
@@ -57,8 +60,8 @@ internal sealed class SearchCoordinator(
 
         var holder = new[] { SearchMatch.NotFound };
         dispatch(() => holder[0] = forward
-            ? document.FindNext(_pattern, matchCase: false, _useRegex)
-            : document.FindPrevious(_pattern, matchCase: false, _useRegex));
+            ? document.FindNext(_pattern, _options)
+            : document.FindPrevious(_pattern, _options));
 
         return !holder[0].Found
             ? SearchPosition.NotFound
@@ -71,22 +74,41 @@ internal sealed class SearchCoordinator(
             return SearchPosition.NotFound;
 
         var result = forward
-            ? await document.FindNextAsync(_pattern, matchCase: false, _useRegex, ct).ConfigureAwait(false)
-            : await document.FindPreviousAsync(_pattern, matchCase: false, _useRegex, ct).ConfigureAwait(false);
+            ? await document.FindNextAsync(_pattern, _options, ct).ConfigureAwait(false)
+            : await document.FindPreviousAsync(_pattern, _options, ct).ConfigureAwait(false);
 
         return !result.Found
             ? SearchPosition.NotFound
             : new SearchPosition { Current = result.CurrentIndex, Total = _totalMatches };
     }
 
-    private bool UpdatePattern(string? pattern, bool useRegex)
+    /// <summary>
+    /// Limits searches to the current selection, or lifts the limit. Returns whether a range is now in effect:
+    /// nothing is limited when nothing is selected. Must be called on the UI thread.
+    /// </summary>
+    public bool SetScope(bool enabled)
+    {
+        _totalMatches = 0;
+        return document.SetSearchScope(enabled);
+    }
+
+    /// <summary>Where the selected match ranks now, with the total from the last count. Must be called on the UI thread.</summary>
+    public SearchPosition CurrentPosition(int total)
+    {
+        _totalMatches = total;
+        return IsEmpty
+            ? SearchPosition.NotFound
+            : new SearchPosition { Current = document.RankOfSelection(), Total = total };
+    }
+
+    private bool UpdatePattern(string? pattern, SearchOptions options)
     {
         var newPattern = pattern ?? string.Empty;
-        if (newPattern == _pattern && useRegex == _useRegex)
+        if (newPattern == _pattern && options == _options)
             return false;
 
         _pattern = newPattern;
-        _useRegex = useRegex;
+        _options = options;
         _totalMatches = 0;
         return true;
     }
@@ -94,7 +116,7 @@ internal sealed class SearchCoordinator(
     private void ResetPattern()
     {
         _pattern = string.Empty;
-        _useRegex = false;
+        _options = SearchOptions.None;
         _totalMatches = 0;
     }
 }

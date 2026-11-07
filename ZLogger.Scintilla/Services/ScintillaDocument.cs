@@ -178,16 +178,16 @@ internal sealed class ScintillaDocument : IDisposable
         RefreshSearchHighlightIfActive();
     }
 
-    public SearchMatch FindNext(string pattern, bool matchCase, bool useRegex)
+    public SearchMatch FindNext(string pattern, SearchOptions options)
     {
-        var match = _searchService.FindNext(pattern, matchCase, useRegex);
+        var match = _searchService.FindNext(pattern, options);
         UpdateFollowTailAfterMove(match);
         return match;
     }
 
-    public SearchMatch FindPrevious(string pattern, bool matchCase, bool useRegex)
+    public SearchMatch FindPrevious(string pattern, SearchOptions options)
     {
-        var match = _searchService.FindPrevious(pattern, matchCase, useRegex);
+        var match = _searchService.FindPrevious(pattern, options);
         UpdateFollowTailAfterMove(match);
         return match;
     }
@@ -199,14 +199,46 @@ internal sealed class ScintillaDocument : IDisposable
             _followTail = IsAtEnd();
     }
 
-    public void HighlightSearch(string pattern, bool matchCase, bool useRegex)
-        => _searchService.HighlightSearch(pattern, matchCase, useRegex);
+    public void HighlightSearch(string pattern, SearchOptions options)
+        => _searchService.HighlightSearch(pattern, options);
 
-    public Task<SearchMatch> FindNextAsync(string pattern, bool matchCase, bool useRegex, CancellationToken cancellationToken) =>
-        RunOnUiAsync(() => _scintilla.IsDisposed ? SearchMatch.NotFound : FindNext(pattern, matchCase, useRegex), cancellationToken);
+    /// <summary>Raised when replacing the document ended a find in selection.</summary>
+    public event Action? SearchScopeLost
+    {
+        add => _searchService.ScopeLost += value;
+        remove => _searchService.ScopeLost -= value;
+    }
 
-    public Task<SearchMatch> FindPreviousAsync(string pattern, bool matchCase, bool useRegex, CancellationToken cancellationToken) =>
-        RunOnUiAsync(() => _scintilla.IsDisposed ? SearchMatch.NotFound : FindPrevious(pattern, matchCase, useRegex), cancellationToken);
+    /// <summary>
+    /// Limits searches to the current selection. Returns whether a range is now in effect, which needs
+    /// something to be selected.
+    /// </summary>
+    public bool SetSearchScope(bool enabled)
+    {
+        var start = (int)Send(LogConstants.SciGetSelectionStart);
+        var end = (int)Send(LogConstants.SciGetSelectionEnd);
+        if (!enabled || end <= start)
+        {
+            _searchService.SetScope(false);
+            return false;
+        }
+
+        _searchService.SetScope(true, start, end);
+        return true;
+    }
+
+    public bool HasSelection =>
+        Send(LogConstants.SciGetSelectionEnd) > Send(LogConstants.SciGetSelectionStart);
+
+    public int RankOfSelection() => _searchService.RankOfSelection();
+
+    public int DocumentLength => (int)Send(LogConstants.SciGetLength);
+
+    public Task<SearchMatch> FindNextAsync(string pattern, SearchOptions options, CancellationToken cancellationToken) =>
+        RunOnUiAsync(() => _scintilla.IsDisposed ? SearchMatch.NotFound : FindNext(pattern, options), cancellationToken);
+
+    public Task<SearchMatch> FindPreviousAsync(string pattern, SearchOptions options, CancellationToken cancellationToken) =>
+        RunOnUiAsync(() => _scintilla.IsDisposed ? SearchMatch.NotFound : FindPrevious(pattern, options), cancellationToken);
 
     /// <summary>
     /// Counts on the UI thread with Scintilla's own search, the same engine navigation uses, in slices short
@@ -215,8 +247,7 @@ internal sealed class ScintillaDocument : IDisposable
     /// </summary>
     public async Task<int> CountMatchesAsync(
         string pattern,
-        bool matchCase,
-        bool useRegex,
+        SearchOptions options,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(pattern) || _scintilla.IsDisposed || !_scintilla.IsHandleCreated)
@@ -227,7 +258,12 @@ internal sealed class ScintillaDocument : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             var (finished, count) = await RunOnUiAsync(() =>
             {
-                _searchService.EnsureActive(pattern, matchCase, useRegex);
+                // A slice posted before the count was cancelled still runs, and must not bring back a pattern
+                // that a newer search has replaced.
+                if (cancellationToken.IsCancellationRequested)
+                    return (true, 0);
+
+                _searchService.SetActiveSearch(pattern, options);
                 var done = _searchService.CountSlice(LogConstants.CountSliceBudgetMs, out var total);
                 return (done, total);
             }, cancellationToken).ConfigureAwait(false);

@@ -94,6 +94,15 @@ internal static class LogConstants
     public const int SearchRefreshThrottleMs = 40;
 
     public const int SearchIndicatorId = 30;
+    public const int SearchScopeIndicatorId = 29;
+    /// <summary>Above the search highlight, because Scintilla draws higher indicators on top.</summary>
+    public const int CurrentMatchIndicatorId = 31;
+    public static readonly System.Drawing.Color DarkCurrentMatchColor = System.Drawing.Color.FromArgb(255, 150, 50);
+    public static readonly System.Drawing.Color LightCurrentMatchColor = System.Drawing.Color.FromArgb(240, 130, 20);
+    public const int DarkCurrentMatchAlpha = 120;
+    public const int LightCurrentMatchAlpha = 110;
+    public const int DarkScopeIndicatorAlpha = 22;
+    public const int LightScopeIndicatorAlpha = 28;
 
     public const int DarkSearchIndicatorAlpha = 70;
     public const int LightSearchIndicatorAlpha = 55;
