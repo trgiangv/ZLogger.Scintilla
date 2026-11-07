@@ -6,70 +6,71 @@ using ZLogger.Scintilla.Rendering;
 
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class RenderFormattingTests
 {
-    [Fact]
+    [TestMethod]
     public void JsonSyntaxHighlighter_StylesJsonKeys()
     {
         var formatter = new JsonSyntaxHighlighter();
         var segments = new List<RenderSegment>();
         const string json = """{"key": "value"}""";
 
-        formatter.AppendJsonStyledSegments(json, segments);
+        formatter.AppendJsonStyledSegments(Encoding.UTF8.GetBytes(json), segments);
 
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonKey);
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonString);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonKey, segments);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonString, segments);
     }
 
-    [Fact]
+    [TestMethod]
     public void JsonSyntaxHighlighter_StylesNumbers()
     {
         var formatter = new JsonSyntaxHighlighter();
         var segments = new List<RenderSegment>();
         const string json = """{"count": 42}""";
 
-        formatter.AppendJsonStyledSegments(json, segments);
+        formatter.AppendJsonStyledSegments(Encoding.UTF8.GetBytes(json), segments);
 
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonNumber);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonNumber, segments);
     }
 
-    [Fact]
+    [TestMethod]
     public void JsonSyntaxHighlighter_StylesBooleans()
     {
         var formatter = new JsonSyntaxHighlighter();
         var segments = new List<RenderSegment>();
         const string json = """{"active": true}""";
 
-        formatter.AppendJsonStyledSegments(json, segments);
+        formatter.AppendJsonStyledSegments(Encoding.UTF8.GetBytes(json), segments);
 
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonBoolean);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonBoolean, segments);
     }
 
-    [Fact]
+    [TestMethod]
     public void JsonSyntaxHighlighter_StylesNull()
     {
         var formatter = new JsonSyntaxHighlighter();
         var segments = new List<RenderSegment>();
         const string json = """{"data": null}""";
 
-        formatter.AppendJsonStyledSegments(json, segments);
+        formatter.AppendJsonStyledSegments(Encoding.UTF8.GetBytes(json), segments);
 
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonNull);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonNull, segments);
     }
 
-    [Fact]
+    [TestMethod]
     public void JsonSyntaxHighlighter_StylesPunctuation()
     {
         var formatter = new JsonSyntaxHighlighter();
         var segments = new List<RenderSegment>();
         const string json = """{"a": [1, 2]}""";
 
-        formatter.AppendJsonStyledSegments(json, segments);
+        formatter.AppendJsonStyledSegments(Encoding.UTF8.GetBytes(json), segments);
 
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.Punctuation);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.Punctuation, segments);
     }
 
-    [Fact]
+    [TestMethod]
     public void JsonSyntaxHighlighter_TotalUtf8Length_MatchesInput()
     {
         var formatter = new JsonSyntaxHighlighter();
@@ -83,69 +84,58 @@ public sealed class RenderFormattingTests
 }
 """;
 
-        formatter.AppendJsonStyledSegments(json, segments);
+        formatter.AppendJsonStyledSegments(Encoding.UTF8.GetBytes(json), segments);
 
         var totalLength = segments.Sum(s => s.Utf8Length);
         var expectedLength = Encoding.UTF8.GetByteCount(json);
-        Assert.Equal(expectedLength, totalLength);
+        Assert.AreEqual(expectedLength, totalLength);
     }
 
-    [Fact]
+    [TestMethod]
     public void LogRenderer_BuildSegments_PlainMessage_ProducesSegments()
     {
         var options = new ScintillaOptions();
         var renderer = new LogRenderer("Cascadia Mono", 10, options);
 
         var message = "[12:00:00 INF] Hello World";
-        var entry = CreateEntry(message);
+        var entry = TestHelper.MakeEntry(message, LogLevel.Information);
 
         var segments = new List<RenderSegment>();
         renderer.BuildSegments(entry, segments);
 
-        Assert.NotEmpty(segments);
+        Assert.IsNotEmpty(segments);
         var totalLength = segments.Sum(s => s.Utf8Length);
-        Assert.Equal(Encoding.UTF8.GetByteCount(message), totalLength);
+        Assert.AreEqual(Encoding.UTF8.GetByteCount(message), totalLength);
     }
 
-    [Fact]
+    [TestMethod]
     public void LogRenderer_BuildJsonSegments_ProducesStyledOutput()
     {
         var renderer = new LogRenderer();
         const string json = """{"key": "value", "num": 42}""";
 
         var segments = new List<RenderSegment>();
-        renderer.BuildJsonSegments(json, segments);
+        renderer.BuildJsonSegments(Encoding.UTF8.GetBytes(json), segments);
 
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonKey);
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonString);
-        Assert.Contains(segments, s => s.SemanticStyle == SemanticStyle.JsonNumber);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonKey, segments);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonString, segments);
+        Assert.Contains(s => s.SemanticStyle == SemanticStyle.JsonNumber, segments);
     }
 
-    [Fact]
+    [TestMethod]
     public void LogRenderer_PrettyJsonDisabledByDefault()
     {
         var renderer = new LogRenderer();
-        Assert.False(renderer.IsPrettyJsonEnabled);
+        Assert.IsFalse(renderer.IsPrettyJsonEnabled);
     }
 
-    [Fact]
+    [TestMethod]
     public void LogRenderer_SetPrettyJson_TogglesFlag()
     {
         var renderer = new LogRenderer();
         renderer.SetPrettyJson(true);
-        Assert.True(renderer.IsPrettyJsonEnabled);
+        Assert.IsTrue(renderer.IsPrettyJsonEnabled);
         renderer.SetPrettyJson(false);
-        Assert.False(renderer.IsPrettyJsonEnabled);
-    }
-
-    private static LogEntry CreateEntry(string message, IReadOnlyDictionary<string, object?>? properties = null)
-    {
-        var bytes = Encoding.UTF8.GetBytes(message);
-        return new LogEntry
-        {
-            Level = LogLevel.Information,
-            Message = new ArraySegment<byte>(bytes),
-            Properties = properties ?? LogEntry.EmptyProperties
-        };
+        Assert.IsFalse(renderer.IsPrettyJsonEnabled);
     }
 }

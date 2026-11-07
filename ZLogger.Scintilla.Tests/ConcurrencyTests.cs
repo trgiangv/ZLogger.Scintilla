@@ -1,16 +1,18 @@
 using Microsoft.Extensions.Logging;
-using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 
+// The posting threads are joined before the test's `using` disposes the viewer.
+// ReSharper disable AccessToDisposedClosure
 namespace ZLogger.Scintilla.Tests;
 
 /// <summary>
 /// Stress tests for concurrent ingest and rapid filter switching.
 /// These tests verify no exceptions are thrown and accounting invariants hold.
 /// </summary>
+[TestClass]
 public sealed class ConcurrencyTests
 {
-    [Fact]
+    [TestMethod]
     public void RapidFilterSwitch_DoesNotThrow()
     {
         var viewer = new ScintillaLogViewer();
@@ -29,7 +31,7 @@ public sealed class ConcurrencyTests
             {
                 try
                 {
-                    var entry = MakeEntry($"msg{i}", (LogLevel)(i % 6));
+                    var entry = TestHelper.MakeEntry($"msg{i}", (LogLevel)(i % 6));
                     viewer.TryPost(entry);
                 }
                 catch (Exception ex)
@@ -56,10 +58,10 @@ public sealed class ConcurrencyTests
         viewer.Stop();
         viewer.Dispose();
 
-        Assert.Empty(exceptions);
+        Assert.IsEmpty(exceptions);
     }
 
-    [Fact]
+    [TestMethod]
     public void ConcurrentTryPost_FromMultipleThreads_DoesNotThrow()
     {
         var viewer = new ScintillaLogViewer();
@@ -76,12 +78,12 @@ public sealed class ConcurrencyTests
             var threadId = t;
             threads[t] = new Thread(() =>
             {
-                barrier.SignalAndWait(); // start all threads simultaneously
+                barrier.SignalAndWait();
                 for (var i = 0; i < entriesPerThread; i++)
                 {
                     try
                     {
-                        var entry = MakeEntry($"t{threadId}-{i}", LogLevel.Information);
+                        var entry = TestHelper.MakeEntry($"t{threadId}-{i}", LogLevel.Information);
                         viewer.TryPost(entry);
                     }
                     catch (Exception ex)
@@ -99,11 +101,11 @@ public sealed class ConcurrencyTests
         viewer.Stop();
         viewer.Dispose();
 
-        Assert.Empty(exceptions);
+        Assert.IsEmpty(exceptions);
     }
 
-    [Fact]
-    public void FilterVersion_MonotonicallyIncreases_OnRapidSetFilter()
+    [TestMethod]
+    public void DocumentEpoch_Advances_OnRapidSetFilter()
     {
         var viewer = new ScintillaLogViewer();
         viewer.Start();
@@ -112,18 +114,18 @@ public sealed class ConcurrencyTests
         for (var i = 0; i < 20; i++)
             viewer.SetFilter(levels[i % levels.Length]);
 
-        var filterVersionField = typeof(ScintillaLogViewerBase)
-            .GetField("_filterVersion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        Assert.NotNull(filterVersionField);
-        var version = (long)filterVersionField!.GetValue(viewer)!;
+        var epochField = typeof(ScintillaLogViewerBase)
+            .GetField("_documentEpoch", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.IsNotNull(epochField);
+        var epoch = (long)epochField.GetValue(viewer)!;
 
         viewer.Stop();
         viewer.Dispose();
 
-        Assert.True(version > 0, $"Expected _filterVersion > 0 after 20 SetFilter calls, got {version}");
+        Assert.IsTrue(epoch > 0, $"Expected _documentEpoch > 0 after 20 SetFilter calls, got {epoch}");
     }
 
-    [Fact]
+    [TestMethod]
     public void TryPost_AfterStop_ReturnsFalseOrTrue_NeverThrows()
     {
         var viewer = new ScintillaLogViewer();
@@ -135,8 +137,8 @@ public sealed class ConcurrencyTests
         {
             try
             {
-                var entry = MakeEntry($"post-after-stop-{i}", LogLevel.Information);
-                viewer.TryPost(entry); // may return true or false — must not throw
+                var entry = TestHelper.MakeEntry($"post-after-stop-{i}", LogLevel.Information);
+                viewer.TryPost(entry);
             }
             catch (Exception ex)
             {
@@ -145,9 +147,6 @@ public sealed class ConcurrencyTests
         }
 
         viewer.Dispose();
-        Assert.Empty(exceptions);
+        Assert.IsEmpty(exceptions);
     }
-
-    private static LogEntry MakeEntry(string text, LogLevel level)
-        => TestHelper.MakeEntry(text, level);
 }

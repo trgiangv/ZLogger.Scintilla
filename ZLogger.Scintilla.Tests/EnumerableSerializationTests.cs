@@ -10,12 +10,13 @@ namespace ZLogger.Scintilla.Tests;
 /// Verifies that <see cref="ScintillaLogFormatter"/> and <see cref="ScintillaLogProcessor"/>
 /// do NOT produce ZLogger's auto-serialized JSON for <see cref="IEnumerable{T}"/> parameters.
 /// ZLogger internally calls <c>JsonSerializer.Serialize</c> for non-<see cref="IFormattable"/>
-/// <see cref="System.Collections.IEnumerable"/> types. Our formatter bypasses this by calling
-/// <c>value.ToString()</c> directly via <see cref="RenderingChars.FormatParameterValue"/>.
+/// <see cref="System.Collections.IEnumerable"/> types. Our formatter detects those values and
+/// prints them with <c>value.ToString()</c> instead.
 /// </summary>
+[TestClass]
 public sealed class EnumerableSerializationTests
 {
-    [Fact]
+    [TestMethod]
     public void Processor_ListOfInts_MessageDoesNotContainAutoSerializedJson()
     {
         var captured = CaptureLogEntry(logger =>
@@ -30,7 +31,7 @@ public sealed class EnumerableSerializationTests
         Assert.DoesNotContain("\"1\"", messageText);
     }
 
-    [Fact]
+    [TestMethod]
     public void Processor_ListOfStrings_MessageDoesNotContainAutoSerializedJson()
     {
         var captured = CaptureLogEntry(logger =>
@@ -45,7 +46,7 @@ public sealed class EnumerableSerializationTests
         Assert.DoesNotContain("\"alpha\",\"beta\"", messageText);
     }
 
-    [Fact]
+    [TestMethod]
     public void Processor_Array_MessageDoesNotContainAutoSerializedJson()
     {
         var captured = CaptureLogEntry(logger =>
@@ -60,7 +61,7 @@ public sealed class EnumerableSerializationTests
         Assert.DoesNotContain("\"x\",\"y\"", messageText);
     }
 
-    [Fact]
+    [TestMethod]
     public void Processor_PlainStringParameter_NotTreatedAsEnumerable()
     {
         var captured = CaptureLogEntry(logger =>
@@ -75,7 +76,7 @@ public sealed class EnumerableSerializationTests
         Assert.DoesNotContain("[\"h\"", messageText);
     }
 
-    [Fact]
+    [TestMethod]
     public void Processor_ParameterSpans_FormattedValueUsesToString()
     {
         var captured = CaptureLogEntry(logger =>
@@ -84,15 +85,15 @@ public sealed class EnumerableSerializationTests
             logger.ZLogInformation($"Data: {data}");
         });
 
-        Assert.True(captured.Properties.ContainsKey(LogConstants.ParameterSpans));
+        Assert.IsTrue(captured.Properties.ContainsKey(LogConstants.ParameterSpans));
         var spans = (ParameterSpan[])captured.Properties[LogConstants.ParameterSpans]!;
-        Assert.Single(spans);
+        Assert.ContainsSingle(spans);
 
         var expected = new List<int> { 1, 2, 3 }.ToString()!;
-        Assert.Equal(expected, spans[0].FormattedValue);
+        Assert.AreEqual(expected, spans[0].FormattedValue);
     }
 
-    [Fact]
+    [TestMethod]
     public void Processor_ParameterSpans_FormattedValueMatchesMessageText()
     {
         var captured = CaptureLogEntry(logger =>
@@ -107,7 +108,7 @@ public sealed class EnumerableSerializationTests
         Assert.Contains(spans[0].FormattedValue, messageText);
     }
 
-    [Fact]
+    [TestMethod]
     public void Processor_ListOfCustomObjects_MessageDoesNotContainAutoSerializedJson()
     {
         var captured = CaptureLogEntry(logger =>
@@ -122,24 +123,6 @@ public sealed class EnumerableSerializationTests
         var messageText = GetMessageText(captured);
 
         Assert.DoesNotContain("IntegerValue", messageText);
-        Assert.DoesNotContain("{\"IntegerValue\"", messageText);
-        Assert.DoesNotContain("[{", messageText);
-    }
-
-    [Fact]
-    public void Processor_ListOfCustomObjects_NoAutoSerializedJson()
-    {
-        var captured = CaptureLogEntry(logger =>
-        {
-            var ids = new List<FakeElementId> { new(1001), new(1002), new(1003) };
-            logger.ZLogInformation($"Selected: {ids}");
-        });
-
-        var messageText = GetMessageText(captured);
-
-        Assert.False(
-            messageText.Contains("IntegerValue"),
-            $"Message should NOT contain auto-serialized JSON.\nActual: [{messageText}]");
         Assert.DoesNotContain("[{", messageText);
     }
 
@@ -147,6 +130,8 @@ public sealed class EnumerableSerializationTests
     {
         public FakeElementId(int v) { IntegerValue = v; }
         public int IntegerValue { get; }
+        // Mirrors Revit's ElementId, so that a serializer would have this property to pick up.
+        // ReSharper disable once UnusedMember.Local
         public long Value => IntegerValue;
         public override string ToString() => IntegerValue.ToString();
     }
@@ -160,16 +145,15 @@ public sealed class EnumerableSerializationTests
             return true;
         });
 
-        using var factory = LoggerFactory.Create(builder =>
-        {
-            builder.SetMinimumLevel(LogLevel.Trace);
-            builder.AddZLoggerLogProcessor(processor);
-        });
+        // Disposing the factory flushes ZLogger, so the entry is captured once this block ends.
+        using (var factory = LoggerFactory.Create(builder =>
+               {
+                   builder.SetMinimumLevel(LogLevel.Trace);
+                   builder.AddZLoggerLogProcessor(processor);
+               }))
+            logAction(factory.CreateLogger("Test"));
 
-        logAction(factory.CreateLogger("Test"));
-        factory.Dispose();
-
-        Assert.NotNull(captured);
+        Assert.IsNotNull(captured);
         return captured;
     }
 

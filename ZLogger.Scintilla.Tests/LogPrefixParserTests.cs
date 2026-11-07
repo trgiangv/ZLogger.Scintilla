@@ -5,59 +5,60 @@ using ZLogger.Scintilla.Rendering;
 
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class LogPrefixParserTests
 {
-    [Fact]
+    [TestMethod]
     public void TokenPayload_ForColorizer_HasColorizerColor()
     {
-        var payload = TokenPayload.ForColorizer(System.Drawing.Color.Red);
-        Assert.False(payload.IsLink);
-        Assert.True(payload.HasColorizerColor);
-        Assert.Equal(System.Drawing.Color.Red.ToArgb(), payload.ColorizerForeground!.Value.ToArgb());
+        var payload = TokenPayload.ForColorizer(Color.Red);
+        Assert.IsFalse(payload.IsLink);
+        Assert.IsTrue(payload.HasColorizerColor);
+        Assert.AreEqual(Color.Red.ToArgb(), payload.ColorizerForeground!.Value.ToArgb());
     }
 
-    [Theory]
-    [InlineData("TRC", SemanticStyle.LevelTrace)]
-    [InlineData("DBG", SemanticStyle.LevelDebug)]
-    [InlineData("INF", SemanticStyle.LevelInformation)]
-    [InlineData("WRN", SemanticStyle.LevelWarning)]
-    [InlineData("ERR", SemanticStyle.LevelError)]
-    [InlineData("CRT", SemanticStyle.LevelCritical)]
+    [TestMethod]
+    [DataRow("TRC", SemanticStyle.LevelTrace)]
+    [DataRow("DBG", SemanticStyle.LevelDebug)]
+    [DataRow("INF", SemanticStyle.LevelInformation)]
+    [DataRow("WRN", SemanticStyle.LevelWarning)]
+    [DataRow("ERR", SemanticStyle.LevelError)]
+    [DataRow("CRT", SemanticStyle.LevelCritical)]
     public void LogPrefixParser_BuildPrefixSegments_MapsAbbreviationToCorrectSemanticStyle(
         string abbrev, SemanticStyle expectedStyle)
     {
         var prefix = $"[12:34:56 {abbrev}] some message";
         var utf8 = Encoding.UTF8.GetBytes(prefix);
         var result = LogPrefixParser.TryParse(utf8);
-        Assert.True(result.Found);
+        Assert.IsTrue(result.Found);
 
         var segments = new List<RenderSegment>();
         LogPrefixParser.BuildPrefixSegments(result, utf8, LogLevel.Information, segments);
 
-        Assert.True(segments.Count >= 4);
-        Assert.Equal(expectedStyle, segments[3].SemanticStyle);
+        Assert.IsTrue(segments.Count >= 4);
+        Assert.AreEqual(expectedStyle, segments[3].SemanticStyle);
     }
 
-    [Fact]
+    [TestMethod]
     public void LogPrefixParser_Prefix_IsRecognized_ForWellFormedInput()
     {
         var prefix = "[12:34:56 INF] some message";
         var utf8 = Encoding.UTF8.GetBytes(prefix);
         var result = LogPrefixParser.TryParse(utf8);
-        Assert.True(result.Found);
-        Assert.Equal(15, result.PrefixByteLength);
+        Assert.IsTrue(result.Found);
+        Assert.AreEqual(15, result.PrefixByteLength);
 
         var remainder = Encoding.UTF8.GetString(utf8, result.PrefixByteLength, utf8.Length - result.PrefixByteLength);
-        Assert.Equal("some message", remainder);
+        Assert.AreEqual("some message", remainder);
     }
 
-    [Fact]
+    [TestMethod]
     public void LogPrefixParser_Prefix_StillParsesMillisecondFormat()
     {
         var prefix = "[12:34:56.789 INF] some message";
         var utf8 = Encoding.UTF8.GetBytes(prefix);
         var result = LogPrefixParser.TryParse(utf8);
-        Assert.True(result.Found);
-        Assert.Equal(19, result.PrefixByteLength);
+        Assert.IsTrue(result.Found);
+        Assert.AreEqual(19, result.PrefixByteLength);
     }
 }

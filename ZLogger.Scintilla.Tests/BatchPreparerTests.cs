@@ -6,40 +6,41 @@ using ZLogger.Scintilla.Rendering;
 
 namespace ZLogger.Scintilla.Tests;
 
-public sealed class BatchPreparerTests : IDisposable
+[TestClass]
+public sealed class BatchPreparerTests
 {
     private readonly LogRenderer _renderer = new();
     private readonly BatchPreparer _preparer;
 
     public BatchPreparerTests()
     {
-        _preparer = new BatchPreparer(_renderer, enableTokenLinks: true);
+        _preparer = new BatchPreparer(_renderer);
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_SingleEntry_ProducesTextAndStyles()
     {
         var entry = TestHelper.MakeEntry("Hello world", LogLevel.Information);
         var entries = new List<LogEntry> { entry };
 
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
-        Assert.True(batch.Text.Count > 0, "Text should contain bytes");
-        Assert.True(batch.Styles.Count > 0, "Styles should contain at least one range");
-        Assert.Equal(1, batch.EntryCount);
-        Assert.Equal(1, batch.Epoch);
+        Assert.IsTrue(batch.Text.Count > 0, "Text should contain bytes");
+        Assert.IsTrue(batch.Styles.Count > 0, "Styles should contain at least one range");
+        Assert.AreEqual(1, batch.EntryCount);
+        Assert.AreEqual(1, batch.Epoch);
 
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_TextContainsOriginalMessageBytes()
     {
         const string message = "[12:00:00 INF] Test message";
         var entry = TestHelper.MakeEntry(message, LogLevel.Information);
         var entries = new List<LogEntry> { entry };
 
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
         var text = Encoding.UTF8.GetString(batch.Text.Array, 0, batch.Text.Count);
         Assert.Contains("Test message", text);
@@ -47,7 +48,7 @@ public sealed class BatchPreparerTests : IDisposable
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_MultipleEntries_ConcatenatesText()
     {
         var entries = new List<LogEntry>
@@ -56,17 +57,17 @@ public sealed class BatchPreparerTests : IDisposable
             TestHelper.MakeEntry("Line two", LogLevel.Warning)
         };
 
-        var batch = _preparer.Prepare(entries, epoch: 2, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 2);
 
         var text = Encoding.UTF8.GetString(batch.Text.Array, 0, batch.Text.Count);
         Assert.Contains("Line one", text);
         Assert.Contains("Line two", text);
-        Assert.Equal(2, batch.EntryCount);
+        Assert.AreEqual(2, batch.EntryCount);
 
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_WithJsonBytes_AppendsJsonAndStyleRanges()
     {
         var jsonContent = "{\n  \"key\": \"value\"\n}";
@@ -80,7 +81,7 @@ public sealed class BatchPreparerTests : IDisposable
         _renderer.SetPrettyJson(true);
 
         var entries = new List<LogEntry> { entry };
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
         var text = Encoding.UTF8.GetString(batch.Text.Array, 0, batch.Text.Count);
         Assert.Contains("\"key\"", text);
@@ -89,7 +90,7 @@ public sealed class BatchPreparerTests : IDisposable
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_WithJsonBytes_CollectsTokenRangesForLinks()
     {
         var jsonContent = "{\n  \"url\": \"https://example.com\"\n}";
@@ -103,14 +104,14 @@ public sealed class BatchPreparerTests : IDisposable
         _renderer.SetPrettyJson(true);
 
         var entries = new List<LogEntry> { entry };
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
-        Assert.True(batch.Tokens.Count >= 0, "Token ranges should be collected (may be 0 if no links detected)");
+        Assert.AreEqual(1, batch.Tokens.Count, "The URL inside the JSON should become a link.");
 
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_WithoutJsonBytes_NoJsonInOutput()
     {
         var entry = TestHelper.MakeEntry("[12:00:00 INF] No JSON here", LogLevel.Information);
@@ -118,7 +119,7 @@ public sealed class BatchPreparerTests : IDisposable
         _renderer.SetPrettyJson(true);
 
         var entries = new List<LogEntry> { entry };
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
         var text = Encoding.UTF8.GetString(batch.Text.Array, 0, batch.Text.Count);
         Assert.DoesNotContain("{", text.Replace("[12:00:00 INF]", ""));
@@ -126,7 +127,7 @@ public sealed class BatchPreparerTests : IDisposable
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_EmptyJsonBytes_SkipsJsonBlock()
     {
         var properties = new Dictionary<string, object?>
@@ -138,55 +139,52 @@ public sealed class BatchPreparerTests : IDisposable
         _renderer.SetPrettyJson(true);
 
         var entries = new List<LogEntry> { entry };
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
-        var textWithoutPrefix = Encoding.UTF8.GetString(batch.Text.Array, 0, batch.Text.Count);
-        Assert.DoesNotContain("\"$type\"", textWithoutPrefix);
+        var text = Encoding.UTF8.GetString(batch.Text.Array, 0, batch.Text.Count);
+        Assert.DoesNotContain("\"$type\"", text);
 
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_StyleRangesSum_MatchesTextByteCount()
     {
         var entry = TestHelper.MakeEntry("Hello", LogLevel.Debug);
         var entries = new List<LogEntry> { entry };
 
-        var batch = _preparer.Prepare(entries, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(entries, epoch: 1);
 
         var styleSum = 0;
         for (var i = 0; i < batch.Styles.Count; i++)
             styleSum += batch.Styles.Array[i].Length;
 
-        Assert.Equal(batch.Text.Count, styleSum);
+        Assert.AreEqual(batch.Text.Count, styleSum);
 
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_EmptyEntryList_ProducesEmptyBatch()
     {
-        var entries = new List<LogEntry>();
+        var batch = _preparer.Prepare([], epoch: 5);
 
-        var batch = _preparer.Prepare(entries, epoch: 5, entriesToRelease: null);
-
-        Assert.Equal(0, batch.EntryCount);
-        Assert.Equal(0, batch.Text.Count);
-        Assert.Equal(0, batch.Styles.Count);
-        Assert.Equal(5, batch.Epoch);
+        Assert.AreEqual(0, batch.EntryCount);
+        Assert.AreEqual(0, batch.Text.Count);
+        Assert.AreEqual(0, batch.Styles.Count);
+        Assert.AreEqual(5, batch.Epoch);
 
         batch.ReturnBuffers();
     }
 
-    [Fact]
+    [TestMethod]
     public void Prepare_ReturnBuffers_DoesNotThrow()
     {
         var entry = TestHelper.MakeEntry("test", LogLevel.Information);
-        var batch = _preparer.Prepare(new List<LogEntry> { entry }, epoch: 1, entriesToRelease: null);
+        var batch = _preparer.Prepare(new List<LogEntry> { entry }, epoch: 1);
 
-        var ex = Record.Exception(() => batch.ReturnBuffers());
-        Assert.Null(ex);
+        var ex = TestHelper.CaptureException(() => batch.ReturnBuffers());
+        Assert.IsNull(ex);
     }
 
-    public void Dispose() => _preparer.Dispose();
 }

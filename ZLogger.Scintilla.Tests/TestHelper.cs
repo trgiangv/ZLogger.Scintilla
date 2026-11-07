@@ -6,6 +6,20 @@ namespace ZLogger.Scintilla.Tests;
 
 internal static class TestHelper
 {
+    /// <summary>Runs <paramref name="action"/> and returns the exception it threw, or <see langword="null"/>.</summary>
+    public static Exception? CaptureException(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
     public static LogEntry MakeEntry(string text, LogLevel level)
     {
         var bytes = Encoding.UTF8.GetBytes(text);

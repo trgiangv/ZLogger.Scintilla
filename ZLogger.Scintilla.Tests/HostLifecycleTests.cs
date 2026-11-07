@@ -1,23 +1,23 @@
 using System.Reflection;
 using Microsoft.Extensions.Logging;
-using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class HostLifecycleTests
 {
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewer_DoubleDispose_DoesNotThrow()
     {
         var viewer = new ScintillaLogViewer();
         viewer.Dispose();
 
-        var ex = Record.Exception(() => viewer.Dispose());
-        Assert.Null(ex);
+        var ex = TestHelper.CaptureException(() => viewer.Dispose());
+        Assert.IsNull(ex);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewer_RegisterDisposeAction_FiresExactlyOnce()
     {
         var callCount = 0;
@@ -27,33 +27,33 @@ public sealed class HostLifecycleTests
         viewer.Dispose();
         viewer.Dispose();
 
-        Assert.Equal(1, callCount);
+        Assert.AreEqual(1, callCount);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewer_TryPost_AfterDispose_ReturnsFalse()
     {
         var viewer = new ScintillaLogViewer();
         viewer.Dispose();
 
-        var entry = MakeEntry("hello", LogLevel.Information);
+        var entry = TestHelper.MakeEntry("hello", LogLevel.Information);
         var result = viewer.TryPost(entry);
 
-        Assert.False(result);
+        Assert.IsFalse(result);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewer_TryPost_AfterDispose_DoesNotThrow()
     {
         var viewer = new ScintillaLogViewer();
         viewer.Dispose();
 
-        var entry = MakeEntry("hello", LogLevel.Information);
-        var ex = Record.Exception(() => viewer.TryPost(entry));
-        Assert.Null(ex);
+        var entry = TestHelper.MakeEntry("hello", LogLevel.Information);
+        var ex = TestHelper.CaptureException(() => viewer.TryPost(entry));
+        Assert.IsNull(ex);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerBase_IsDisposed_AfterDispose()
     {
         var viewer = new ScintillaLogViewer();
@@ -63,42 +63,39 @@ public sealed class HostLifecycleTests
             .GetField("_disposed", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(viewer)!;
 
-        Assert.True(isDisposed);
+        Assert.IsTrue(isDisposed);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerWpf_DoubleDispose_DoesNotThrow()
     {
         Exception? ex = null;
-        var thread = new System.Threading.Thread(() =>
+        var thread = new Thread(() =>
         {
             var viewer = new ScintillaLogViewerWpf();
             viewer.Dispose();
-            ex = Record.Exception(() => viewer.Dispose());
+            ex = TestHelper.CaptureException(() => viewer.Dispose());
         });
-        thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         thread.Join();
-        Assert.Null(ex);
+        Assert.IsNull(ex);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerWpf_TryPost_AfterDispose_ReturnsFalse()
     {
         bool result = true;
-        var thread = new System.Threading.Thread(() =>
+        var thread = new Thread(() =>
         {
             var viewer = new ScintillaLogViewerWpf();
             viewer.Dispose();
-            var entry = MakeEntry("hello", LogLevel.Information);
+            var entry = TestHelper.MakeEntry("hello", LogLevel.Information);
             result = viewer.TryPost(entry);
         });
-        thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         thread.Join();
-        Assert.False(result);
+        Assert.IsFalse(result);
     }
-
-    private static LogEntry MakeEntry(string text, LogLevel level)
-        => TestHelper.MakeEntry(text, level);
 }

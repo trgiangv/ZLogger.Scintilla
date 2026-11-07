@@ -1,12 +1,13 @@
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class SolutionStructureTests
 {
-    [Fact]
+    [TestMethod]
     public void ArchitectureDocument_MustDefineInPlaceRewriteBoundaries()
     {
         var architecturePath = GetRepoFilePath("docs/architecture.md");
-        Assert.True(File.Exists(architecturePath), "docs/architecture.md must exist.");
+        Assert.IsTrue(File.Exists(architecturePath), "docs/architecture.md must exist.");
 
         var content = File.ReadAllText(architecturePath);
 
@@ -16,7 +17,7 @@ public sealed class SolutionStructureTests
         Assert.Contains("ArrayPool everywhere", content);
     }
 
-    [Fact]
+    [TestMethod]
     public void RequiredDocsExist()
     {
         var requiredDocs = new[]
@@ -31,11 +32,11 @@ public sealed class SolutionStructureTests
         foreach (var doc in requiredDocs)
         {
             var path = GetRepoFilePath(doc);
-            Assert.True(File.Exists(path), $"Required doc missing: {doc}");
+            Assert.IsTrue(File.Exists(path), $"Required doc missing: {doc}");
         }
     }
 
-    [Fact]
+    [TestMethod]
     public void MainProject_HasExpectedFolderStructure()
     {
         var expectedFolders = new[]
@@ -50,16 +51,16 @@ public sealed class SolutionStructureTests
         foreach (var folder in expectedFolders)
         {
             var path = GetRepoFilePath(folder);
-            Assert.True(Directory.Exists(path), $"Expected folder missing: {folder}");
+            Assert.IsTrue(Directory.Exists(path), $"Expected folder missing: {folder}");
         }
     }
 
-    [Fact]
+    [TestMethod]
     public void MainProject_HasMinimumSourceFiles()
     {
         var srcPath = GetRepoFilePath("ZLogger.Scintilla");
         var csFiles = Directory.GetFiles(srcPath, "*.cs", SearchOption.AllDirectories);
-        Assert.True(csFiles.Length >= 15,
+        Assert.IsTrue(csFiles.Length >= 15,
             $"Expected at least 15 .cs files in ZLogger.Scintilla, found {csFiles.Length}");
     }
 

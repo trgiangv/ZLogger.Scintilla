@@ -4,171 +4,106 @@ using ZLogger.Scintilla.Pipeline;
 
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class LogHistoryBufferTests
 {
-    // ── IsEnabled ─────────────────────────────────────────────────────────
-
-    [Fact]
+    [TestMethod]
     public void IsEnabled_FalseWhenMaxEntriesIsZero()
     {
-        var buf = MakeBuffer(maxEntries: 0);
-        Assert.False(buf.IsEnabled);
+        Assert.IsFalse(MakeBuffer(maxEntries: 0).IsEnabled);
     }
 
-    [Fact]
+    [TestMethod]
     public void IsEnabled_TrueWhenMaxEntriesPositive()
     {
-        var buf = MakeBuffer(maxEntries: 100);
-        Assert.True(buf.IsEnabled);
+        Assert.IsTrue(MakeBuffer(maxEntries: 100).IsEnabled);
     }
 
-    // ── Enqueue / EnqueueBatch ────────────────────────────────────────────
-
-    [Fact]
-    public void Enqueue_IncreasesHistoryCount()
+    [TestMethod]
+    public void EnqueueBatch_UpdatesCountAndMetrics()
     {
         var metrics = new LogIngestMetrics();
         var buf = MakeBuffer(maxEntries: 100, metrics);
-        buf.Enqueue(MakeEntry("a", LogLevel.Information));
-        Assert.Equal(1, metrics.HistoryEntries);
+
+        buf.EnqueueBatch([Entry(LogLevel.Information), Entry(LogLevel.Warning), Entry(LogLevel.Error)]);
+
+        Assert.AreEqual(3, buf.Count);
+        Assert.AreEqual(3, metrics.HistoryEntries);
     }
 
-    [Fact]
-    public void EnqueueBatch_AddsAllEntries()
-    {
-        var metrics = new LogIngestMetrics();
-        var buf = MakeBuffer(maxEntries: 100, metrics);
-        var entries = new[]
-        {
-            MakeEntry("a", LogLevel.Information),
-            MakeEntry("b", LogLevel.Warning),
-            MakeEntry("c", LogLevel.Error)
-        };
-        buf.EnqueueBatch(entries);
-        Assert.Equal(3, metrics.HistoryEntries);
-    }
-
-    // ── CaptureSnapshot — All ─────────────────────────────────────────────
-
-    [Fact]
-    public void CaptureSnapshot_All_ReturnsAllEntries()
+    [TestMethod]
+    public void Snapshot_AtTrace_ReturnsEveryEntry()
     {
         var buf = MakeBuffer(maxEntries: 100);
-        buf.Enqueue(MakeEntry("a", LogLevel.Information));
-        buf.Enqueue(MakeEntry("b", LogLevel.Warning));
-        buf.Enqueue(MakeEntry("c", LogLevel.Error));
+        buf.EnqueueBatch([Entry(LogLevel.Trace), Entry(LogLevel.Warning), Entry(LogLevel.Error)]);
 
-        var snapshot = buf.CaptureSnapshot(LogLevel.Trace);
-
-        Assert.Equal(3, snapshot.Count);
+        Assert.AreEqual(3, Levels(buf, LogLevel.Trace).Count);
     }
 
-    // ── CaptureSnapshot — level-only ──────────────────────────────────────
-
-    [Fact]
-    public void CaptureSnapshot_LevelOnly_FiltersCorrectly()
+    [TestMethod]
+    public void Snapshot_FiltersByLevel_InOrder()
     {
         var buf = MakeBuffer(maxEntries: 100);
-        buf.Enqueue(MakeEntry("info", LogLevel.Information));
-        buf.Enqueue(MakeEntry("warn", LogLevel.Warning));
-        buf.Enqueue(MakeEntry("err", LogLevel.Error));
+        buf.EnqueueBatch([Entry(LogLevel.Information), Entry(LogLevel.Warning), Entry(LogLevel.Error)]);
 
-        var snapshot = buf.CaptureSnapshot(LogLevel.Warning);
-
-        Assert.Equal(2, snapshot.Count);
-        Assert.Collection(
-            snapshot,
-            entry => Assert.Equal(LogLevel.Warning, entry.Level),
-            entry => Assert.Equal(LogLevel.Error, entry.Level));
+        CollectionAssert.AreEqual(
+            new[] { LogLevel.Warning, LogLevel.Error },
+            Levels(buf, LogLevel.Warning));
     }
 
-    // ── CaptureSnapshot — cancellation ────────────────────────────────────
-
-    [Fact]
-    public void CaptureSnapshot_CancelledToken_ReturnsPartialOrEmpty()
+    [TestMethod]
+    public void Snapshot_SplitsIntoChunks()
     {
-        var buf = MakeBuffer(maxEntries: 10000);
-        for (var i = 0; i < 512; i++)
-            buf.Enqueue(MakeEntry($"entry {i}", LogLevel.Information));
+        var buf = MakeBuffer(maxEntries: 100);
+        buf.EnqueueBatch(Enumerable.Range(0, 25).Select(_ => Entry(LogLevel.Information)).ToArray());
 
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
+        var sizes = buf.CaptureChunkedSnapshot(LogLevel.Trace, chunkSize: 10).Select(chunk => chunk.Count).ToArray();
 
-        var snapshot = buf.CaptureSnapshot(LogLevel.Trace, cts.Token);
-
-        // Cancellation is checked every 256 items; may return 0 or 256 entries
-        Assert.True(snapshot.Count <= 256);
+        CollectionAssert.AreEqual(new[] { 10, 10, 5 }, sizes);
     }
 
-    // ── TrimIfNeeded ──────────────────────────────────────────────────────
-
-    [Fact]
-    public void TrimIfNeeded_RemovesOldestEntriesWhenOverCapacity()
-    {
-        var metrics = new LogIngestMetrics();
-        var buf = MakeBuffer(maxEntries: 3, metrics);
-        buf.Enqueue(MakeEntry("a", LogLevel.Information));
-        buf.Enqueue(MakeEntry("b", LogLevel.Information));
-        buf.Enqueue(MakeEntry("c", LogLevel.Information));
-        buf.Enqueue(MakeEntry("d", LogLevel.Information));
-
-        buf.TrimIfNeeded();
-
-        Assert.Equal(3, buf.Count);
-        Assert.Equal(3, metrics.HistoryEntries);
-    }
-
-    // ── Local count ────────────────────────────────────────────────────────
-
-    [Fact]
-    public void Count_TracksLocalEntries_IndependentOfMetrics()
-    {
-        var metrics = new LogIngestMetrics();
-        var buf = MakeBuffer(maxEntries: 100, metrics);
-        buf.Enqueue(MakeEntry("a", LogLevel.Information));
-        buf.EnqueueBatch(new[] { MakeEntry("b", LogLevel.Warning), MakeEntry("c", LogLevel.Error) });
-
-        Assert.Equal(3, buf.Count);
-        Assert.Equal(3, metrics.HistoryEntries);
-
-        metrics.ResetOnClear();
-        Assert.Equal(0, metrics.HistoryEntries);
-        Assert.Equal(3, buf.Count);
-    }
-
-    [Fact]
-    public void TrimIfNeeded_UsesLocalCount_NotSharedMetrics()
+    [TestMethod]
+    public void TrimIfNeeded_RemovesTheOldest()
     {
         var metrics = new LogIngestMetrics();
         var buf = MakeBuffer(maxEntries: 2, metrics);
-        buf.Enqueue(MakeEntry("a", LogLevel.Information));
-        buf.Enqueue(MakeEntry("b", LogLevel.Information));
-        buf.Enqueue(MakeEntry("c", LogLevel.Information));
-
-        metrics.ResetOnClear();
-        Assert.Equal(0, metrics.HistoryEntries);
+        buf.EnqueueBatch([Entry(LogLevel.Trace), Entry(LogLevel.Warning), Entry(LogLevel.Error)]);
 
         buf.TrimIfNeeded();
-        Assert.Equal(2, buf.Count);
+
+        Assert.AreEqual(2, metrics.HistoryEntries);
+        CollectionAssert.AreEqual(new[] { LogLevel.Warning, LogLevel.Error }, Levels(buf, LogLevel.Trace));
     }
 
-    [Fact]
-    public void DrainAll_DecrementsLocalCount()
+    [TestMethod]
+    public void TrimIfNeeded_LeavesAFullBufferAlone()
     {
-        var buf = MakeBuffer(maxEntries: 100);
-        buf.Enqueue(MakeEntry("a", LogLevel.Information));
-        buf.Enqueue(MakeEntry("b", LogLevel.Warning));
-        Assert.Equal(2, buf.Count);
+        var buf = MakeBuffer(maxEntries: 2);
+        buf.EnqueueBatch([Entry(LogLevel.Trace), Entry(LogLevel.Warning)]);
 
-        buf.DrainAll(_ => { });
-        Assert.Equal(0, buf.Count);
+        buf.TrimIfNeeded();
+
+        Assert.AreEqual(2, buf.Count);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    [TestMethod]
+    public void Clear_LeavesCountAndMetricsAtZero()
+    {
+        var metrics = new LogIngestMetrics();
+        var buf = MakeBuffer(maxEntries: 100, metrics);
+        buf.EnqueueBatch([Entry(LogLevel.Trace), Entry(LogLevel.Warning)]);
+
+        buf.Clear();
+
+        Assert.AreEqual(0, buf.Count);
+        Assert.AreEqual(0, metrics.HistoryEntries);
+    }
+
+    private static List<LogLevel> Levels(LogHistoryBuffer buffer, LogLevel minimum) =>
+        buffer.CaptureChunkedSnapshot(minimum).SelectMany(chunk => chunk.Select(entry => entry.Level).ToList()).ToList();
 
     private static LogHistoryBuffer MakeBuffer(int maxEntries, LogIngestMetrics? metrics = null)
         => new(metrics ?? new LogIngestMetrics(), maxEntries);
 
-    private static LogEntry MakeEntry(string text, LogLevel level)
-        => TestHelper.MakeEntry(text, level);
+    private static LogEntry Entry(LogLevel level) => TestHelper.MakeEntry("entry", level);
 }

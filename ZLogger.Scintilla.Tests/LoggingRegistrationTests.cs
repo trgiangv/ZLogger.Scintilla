@@ -4,9 +4,10 @@ using ZLogger.Scintilla.Pipeline;
 
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class LoggingRegistrationTests
 {
-    [Fact]
+    [TestMethod]
     public void ScintillaLogProcessor_Ctor_MustAcceptPostDelegate()
     {
         var constructors = typeof(ScintillaLogProcessor)
@@ -16,6 +17,6 @@ public sealed class LoggingRegistrationTests
             c.GetParameters().Any(p =>
                 p.ParameterType == typeof(Func<LogEntry, bool>)));
 
-        Assert.True(hasDelegate);
+        Assert.IsTrue(hasDelegate);
     }
 }

@@ -6,9 +6,10 @@ using LoggingBuilderExtensions = ZLogger.Scintilla.Public.LoggingBuilderExtensio
 
 namespace ZLogger.Scintilla.Tests;
 
+[TestClass]
 public sealed class PublicApiShapeTests
 {
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerBase_HasNoStringFilterOverload()
     {
         var stringFilter = typeof(ScintillaLogViewerBase)
@@ -18,10 +19,10 @@ public sealed class PublicApiShapeTests
                 m.GetParameters() is { Length: 1 } p &&
                 p[0].ParameterType == typeof(string));
 
-        Assert.Null(stringFilter);
+        Assert.IsNull(stringFilter);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerBase_HasLogLevelFilterOverload()
     {
         var logLevelFilter = typeof(ScintillaLogViewerBase)
@@ -31,32 +32,32 @@ public sealed class PublicApiShapeTests
                 m.GetParameters() is { Length: 1 } p &&
                 p[0].ParameterType == typeof(LogLevel));
 
-        Assert.NotNull(logLevelFilter);
+        Assert.IsNotNull(logLevelFilter);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerBase_HasFindNextAsync()
     {
         var method = typeof(ScintillaLogViewerBase).GetMethod(
             nameof(ScintillaLogViewerBase.FindNextAsync),
             [typeof(CancellationToken)]);
 
-        Assert.NotNull(method);
-        Assert.Equal(typeof(Task<SearchPosition>), method!.ReturnType);
+        Assert.IsNotNull(method);
+        Assert.AreEqual(typeof(Task<SearchPosition>), method.ReturnType);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerBase_HasFindPreviousAsync()
     {
         var method = typeof(ScintillaLogViewerBase).GetMethod(
             nameof(ScintillaLogViewerBase.FindPreviousAsync),
             [typeof(CancellationToken)]);
 
-        Assert.NotNull(method);
-        Assert.Equal(typeof(Task<SearchPosition>), method!.ReturnType);
+        Assert.IsNotNull(method);
+        Assert.AreEqual(typeof(Task<SearchPosition>), method.ReturnType);
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaLogViewerBase_ExactPublicMemberSet()
     {
         var expected = new[]
@@ -87,11 +88,23 @@ public sealed class PublicApiShapeTests
         var missing = expected.Except(actual).ToArray();
         var extra = actual.Except(expected).ToArray();
 
-        Assert.True(missing.Length == 0, $"Missing members: {string.Join(", ", missing)}");
-        Assert.True(extra.Length == 0, $"Unexpected members: {string.Join(", ", extra)}");
+        Assert.IsTrue(missing.Length == 0, $"Missing members: {string.Join(", ", missing)}");
+        Assert.IsTrue(extra.Length == 0, $"Unexpected members: {string.Join(", ", extra)}");
     }
 
-    [Fact]
+    [TestMethod]
+    public void TheAssembly_HoldsNoCompilerGeneratedDuplicates()
+    {
+        // A merge of separately built assemblies renames its duplicates to "<guid>Name", and a build should not.
+        var renamed = typeof(ScintillaLogViewerBase).Assembly.GetTypes()
+            .Where(t => System.Text.RegularExpressions.Regex.IsMatch(t.Name, "^<[0-9a-f]{8}-"))
+            .Select(t => t.FullName)
+            .ToArray();
+
+        Assert.IsEmpty(renamed, string.Join(", ", renamed));
+    }
+
+    [TestMethod]
     public void OnlyAllowedPublicInterfaces_AreExported()
     {
         var assembly = typeof(ScintillaLogViewerBase).Assembly;
@@ -112,12 +125,12 @@ public sealed class PublicApiShapeTests
         var missing = expected.Except(publicInterfaces).ToArray();
         var extra = publicInterfaces.Except(expected).ToArray();
 
-        Assert.True(missing.Length == 0, $"Missing public interfaces: {string.Join(", ", missing)}");
-        Assert.True(extra.Length == 0,
+        Assert.IsTrue(missing.Length == 0, $"Missing public interfaces: {string.Join(", ", missing)}");
+        Assert.IsTrue(extra.Length == 0,
             $"Unexpected public interfaces (add to expected or make internal): {string.Join(", ", extra)}");
     }
 
-    [Fact]
+    [TestMethod]
     public void ScintillaOptions_HasNoStringFilterMethod()
     {
         var methods = typeof(ScintillaOptions)
@@ -126,10 +139,10 @@ public sealed class PublicApiShapeTests
         var stringFilter = methods.FirstOrDefault(m =>
             m.GetParameters().Any(p => p.ParameterType == typeof(string) && p.Name == "level"));
 
-        Assert.Null(stringFilter);
+        Assert.IsNull(stringFilter);
     }
 
-    [Fact]
+    [TestMethod]
     public void LoggingBuilderExtensions_HasNoStringFilterOverloads()
     {
         var methods = typeof(LoggingBuilderExtensions)
@@ -140,6 +153,6 @@ public sealed class PublicApiShapeTests
                 p.ParameterType == typeof(string) && p.Name is "level" or "filterLevel"))
             .ToArray();
 
-        Assert.Empty(stringFilterOverloads);
+        Assert.IsEmpty(stringFilterOverloads);
     }
 }
