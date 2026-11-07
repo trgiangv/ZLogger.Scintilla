@@ -1,255 +1,139 @@
 # Benchmarks
 
-Benchmarks live in `ZLogger.Scintilla.Benchmarks/` and use [BenchmarkDotNet](https://benchmarkdotnet.org/).
+Numbers published before this page are **withdrawn**. That suite ran without a message loop, so neither control ever displayed anything.
 
-**Environment:** Intel Core Ultra 7 265K 3.90GHz · .NET 8.0.25 · Windows 11 25H2 · BenchmarkDotNet v0.15.8
+The suite answers three separate questions, so that a result can be attributed to the layer that caused it:
 
----
-
-## Performance Summary
-
-```mermaid
-flowchart LR
-    subgraph Scintilla["ZLogger.Scintilla"]
-        S1["Enqueue: 2–10× faster"]
-        S2["Memory: 6–38× less"]
-        S3["Search: 31–664K× faster"]
-        S4["Paint: ≈ equivalent"]
-    end
-
-    subgraph Serilog["Serilog + RichTextBox"]
-        R1["Lock-based queue"]
-        R2["String boxing"]
-        R3["Managed string scan"]
-        R4["RTF rendering"]
-    end
-
-    S1 ---|"vs"| R1
-    S2 ---|"vs"| R2
-    S3 ---|"vs"| R3
-    S4 ---|"vs"| R4
-```
-
----
-
-## Running Benchmarks
+| Suite | Question | UI | Time |
+|-------|----------|----|------|
+| `logger` | ZLogger vs Serilog, and what this repo's processor adds | None | ~1 min |
+| `control` | Scintilla vs RichTextBox, with no logging framework | Visible window | ~1 min |
+| `stack` | This library vs Serilog + `Serilog.Sinks.RichTextBox.WinForms.Colored`, end to end, as a user experiences it | Visible window | ~2 min |
 
 ```bash
-dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- --filter *
-dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- --filter *IngestThroughput*
-dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- --list flat
+dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- logger
+dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- control
+dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- stack
+dotnet run -c Release --project ZLogger.Scintilla.Benchmarks -- all
 ```
 
-Or use the helper script:
+`control` and `stack` accept a repeat count, for example `-- control 5`. The default is 3. Each run uses a fresh process.
 
-```powershell
-.\ZLogger.Scintilla.Benchmarks\run-benchmarks.ps1 -Suite ingest
-.\ZLogger.Scintilla.Benchmarks\run-benchmarks.ps1 -Suite json
-.\ZLogger.Scintilla.Benchmarks\run-benchmarks.ps1 -Suite all
-```
-
-Results are written to `BenchmarkDotNet.Artifacts/results/`.
+**Environment:** Intel Core Ultra 7 265K, 63.5 GB, Windows build 26300, .NET 8.0, 1200x800 window. Scintilla5.NET 7.1.1 (native Scintilla 5.6.7), ZLogger 2.6.1, Serilog 4.4.0, sink 3.2.1, BenchmarkDotNet 0.15.8.
 
 ---
 
-## Benchmark Groups
+## Stack: end to end, at the same size
 
-Every benchmark class runs in two comparison groups:
+The sink's public API allows at most 2,048 lines, and it renders its whole buffer again on every flush, so its cost depends directly on how many lines it keeps. Comparing it at any other size than the library says nothing, so both keep **2,048 lines** here, with the same window, font, word wrap, log template and messages. Median of 3 runs.
 
-| Group | Serilog Config | Scintilla Config | Purpose |
-|-------|---------------|------------------|---------|
-| **Production** | Real `RichTextBoxSink`, 2048-line cap | 50k lines, history enabled | Real-world production behavior |
-| **Uncapped** | Wrapper bypassing cap (50k lines via reflection) | 50k lines, history enabled | Fair same-volume comparison |
+A difference here belongs to framework, pipeline and control together, not to any one of them.
 
-Each group also splits measurements into two phases:
+**Burst: 50,000 messages from 4 threads**
 
-| Phase | What it measures |
-|-------|-----------------|
-| `*_Enqueue` | Time to push all messages into the pipeline only — no waiting for render. Fair producer-side comparison. |
-| `*_Drain` / `*_Full` | Time for full cycle: enqueue + render completion. Measures end-to-end latency. |
+| What the user experiences | This library | Serilog sink |
+|---------------------------|--------------|--------------|
+| A single line appears, when idle | 16 ms | 16 ms |
+| Last line on screen | **54 ms** | 123 ms |
+| Logging threads held up for | **39 ms** | 43 ms |
+| Longest time the window could not paint | **21 ms** | 54 ms |
+| Paints per second during the load | **50** | 16 |
+| Find a token that is not there, afterwards | **0.5 ms** | 12 ms |
+| Page up, afterwards | **2.5 ms** | 11 ms |
+| Total allocation | **15 MB** | 43 MB |
+| Private memory over baseline | **19 MB** | 25 MB |
 
----
+**Sustained: 20,000 messages/s for 5 s from 1 thread**
 
-## Benchmark Classes
+| What the user experiences | This library | Serilog sink |
+|---------------------------|--------------|--------------|
+| A single line appears, when idle | 16 ms | 16 ms |
+| Longest time the window could not paint | **30 ms** | 55 ms |
+| Paints per second during the load | **62** | 13 |
+| Find a token that is not there, afterwards | **0.5 ms** | 12 ms |
+| Page up, afterwards | **2.6 ms** | 7.9 ms |
+| Total allocation | **91 MB** | 764 MB |
+| Private memory over baseline | 29 MB | **18 MB** |
 
-| Class | What It Measures | Volume |
-|-------|-----------------|--------|
-| `IngestThroughputBenchmark` | 4 concurrent producers pushing messages; enqueue phase vs drain phase | 50k messages |
-| `ColorizedRenderBenchmark` | Full pipeline: ingest → colorize → pixel paint | 2k structured JSON |
-| `LargeDocumentSearchBenchmark` | `HighlightSearch` + `FindNext` on pre-filled document | 50k pre-filled lines |
-| `FilterReapplyBenchmark` | `SetFilter(Warning)` reapply from history vs Serilog re-emit | 50k history entries |
-| `PaintBenchmark` | Isolated `WM_PRINTCLIENT` pixel-draw cost | 5k pre-filled lines |
-| `SustainedLoadBenchmark` | Continuous load — enqueue throughput + memory pressure | 100k messages |
-| `JsonPipelineBenchmark` | `EnablePrettyJson` overhead: JSON off vs on for plain and structured messages | 5k messages |
+In both stacks the last line ends up on screen, and the idle time is at the resolution of the measurement. Under a burst, both skip lines that would be gone before anyone could see them.
 
----
+### The library at its default size
 
-## Data: Realistic Mixed
+The library keeps **50,000 lines** by default. The sink cannot be configured to do that, so these figures have no counterpart. For RichTextBox itself at that size, see the `control` suite.
 
-All benchmarks use `ScenarioDataFactory.BuildRealisticMixed()`:
+| What the user experiences | Burst | Sustained |
+|---------------------------|-------|-----------|
+| A single line appears, when idle | 16 ms | 16 ms |
+| Last line on screen, from the first message logged | 143 ms | 85 ms after the last message |
+| Logging threads held up for | 115 ms | - |
+| Longest time the window could not paint | 125 ms | 34 ms |
+| Paints per second during the load | 27 | 54 |
+| Find a token that is not there, afterwards | 12 ms | 12 ms |
+| Page up, afterwards | 2.6 ms | 2.5 ms |
+| Total allocation | 57 MB | 92 MB |
+| Private memory over baseline | 66 MB | 70 MB |
 
-| Property | Value |
-|----------|-------|
-| Level distribution | Trace 10%, Debug 20%, Info 40%, Warning 20%, Error 8%, Critical 2% |
-| Message size | 64–2048 bytes, mean ~256 |
-| Content mix | 60% plain text, 30% structured JSON, 10% exception stack traces |
-| Reproducibility | Deterministic via seed — same results across runs |
+The 125 ms in the burst is nearly the whole burst, because the timer behind this metric only runs once nothing else is waiting. Input is handled ahead of paint, and paint ahead of that timer, so this is an upper bound on what a user would feel.
 
----
+### What the metrics mean
 
-## Results (v0.0.4 — Intel Core Ultra 7 265K · .NET 8.0.25)
-
-### IngestThroughputBenchmark — 50k messages, 4 producers
-
-#### Enqueue phase (producer-side, fair comparison)
-
-| | Scintilla | Serilog+RTB | Ratio |
-|---|---|---|---|
-| Production enqueue | **8.7 ms** | 12.0 ms | **1.4× faster** |
-| Uncapped enqueue | **9.7 ms** | 18.7 ms | **1.9× faster** |
-| Production alloc | **2.67 MB** | 17.17 MB | **6.4× less** |
-| Uncapped alloc | **4.83 MB** | 50.6 MB | **10.5× less** |
-
-`BoundedChannel.TryWrite` (lock-free) vs `ConcurrentCircularBuffer.Add` (lock-based). Allocation difference from `ArrayPool<byte>` vs string boxing.
-
-#### Drain phase (render-thread latency)
-
-| | Scintilla | Serilog+RTB |
-|---|---|---|
-| Production drain | 5,009 ms | **59.1 ms** |
-| Uncapped drain | 5,008 ms | **66.7 ms** |
-
-Scintilla drain is higher because it renders 50k lines with syntax coloring via async `BeginInvoke`. Serilog appends RTF text synchronously. These are different rendering models — **drain time should not be used for head-to-head comparison**. In production, users see log lines appear progressively in batches, not after a 5-second wait.
+- **Longest time the window could not paint** is the longest gap between ticks of a UI timer. Windows delivers a timer only when no posted message, input or paint is waiting. A round trip with `Invoke` would not show this, because its posted message overtakes the input and paint that are starving.
+- **Last line on screen** means the line is in the document and its position is inside the client area. The moment of presentation itself is not timed.
 
 ---
 
-### ColorizedRenderBenchmark — 2k structured JSON messages
+## Logger: no UI
 
-#### Enqueue phase
+One message with three parameters, on a single thread. `Discard` stops at the framework's output. `Format` also renders the message into a reused UTF-8 buffer. BenchmarkDotNet `ShortRun`, so differences of a few nanoseconds are not meaningful.
 
-| | Scintilla | Serilog+RTB | Ratio |
-|---|---|---|---|
-| Production enqueue | **147 μs** | 1,051 μs | **7.1× faster** |
-| Uncapped enqueue | **118 μs** | 779 μs | **6.6× faster** |
-| Production alloc | **111 KB** | 705 KB | **6.4× less** |
+| Method | Mean | Allocated |
+|--------|------|-----------|
+| Serilog, discard | 98 ns | 488 B |
+| Serilog, format | 155 ns | 488 B |
+| ZLogger `LogInformation`, discard | 142 ns | 256 B |
+| ZLogger `LogInformation`, format | 153 ns | 256 B |
+| ZLogger `ZLogInformation`, discard | 131 ns | 0 B |
+| ZLogger `ZLogInformation`, format | 156 ns | 0 B |
+| Processor deferring to the pump, `LogInformation` | **191 ns** | **256 B** |
+| Processor deferring to the pump, `ZLogInformation` | **149 ns** | **0 B** |
+| Processor formatting on the logging thread, `LogInformation` | 298 ns | 457 B |
+| Processor formatting on the logging thread, `ZLogInformation` | 275 ns | 201 B |
 
-#### Full pipeline allocation
+ZLogger and Serilog cost about the same per call to format a message. ZLogger allocates less.
 
-| | Scintilla | Serilog+RTB | Ratio |
-|---|---|---|---|
-| Production full alloc | **176 KB** | 8,769 KB | **50× less** |
-| Uncapped full alloc | **2,128 KB** | 8,769 KB | **4.1× less** |
+A message holding only immutable values is deferred to the pump, so the logging thread pays about what ZLogger costs when it discards the message. These two rows are the logging thread's cost and not the whole cost: the formatting happens later on the pump, and they leave out the channel write. The `stack` suite measures all of it.
 
----
-
-### SustainedLoadBenchmark — 100k messages
-
-#### Enqueue phase
-
-| | Scintilla | Serilog+RTB | Ratio |
-|---|---|---|---|
-| Production enqueue | **8.4 ms** | 49.3 ms | **5.9× faster** |
-| Uncapped enqueue | **8.9 ms** | 77.2 ms | **8.7× faster** |
-| Production alloc | **5.5 MB** | 37.3 MB | **6.8× less** |
-| Uncapped alloc | **5.5 MB** | 73.0 MB | **13.3× less** |
-
-#### Full pipeline (enqueue + render)
-
-| | Scintilla | Serilog+RTB | Ratio |
-|---|---|---|---|
-| Production full | **43.3 ms** | 86.1 ms | **2.0× faster** |
-| Uncapped full | **43.3 ms** | 127.3 ms | **2.9× faster** |
-| Production full alloc | **6.12 MB** | 42.3 MB | **6.9× less** |
-| Uncapped full alloc | **6.34 MB** | 153.6 MB | **24.2× less** |
-
-At 100k messages uncapped, Serilog allocates **154 MB** vs Scintilla's **6 MB** — a **24× difference**. This is the most production-relevant memory metric.
-
-> **v0.0.3 → post-v0.0.3:** Full pipeline improved from 78.5 ms → 43.3 ms (**45% faster**) following pipeline simplification and removal of redundant `try-catch` blocks in `ScintillaLogFormatter`.
+Any other message is formatted on the logging thread, because a value may be mutable or tied to that thread. The processor then adds about 120-145 ns and 201 B. All of these use a processor configured like a viewer with no linkifier. A linkifier needs every parameter's text, so it costs more.
 
 ---
 
-### LargeDocumentSearchBenchmark — 50k lines
+## Control: no logging framework
 
-| | Scintilla | RTB | Ratio |
-|---|---|---|---|
-| Highlight+FindNext common token | **1.67 ms** | 49.2 ms | **29× faster** |
-| FindNext rare token | **90 ns** | 60.3 ms | **671,000× faster** |
-| Common token allocation | **555 B** | 168 MB | **303,000× less** |
+The same 60,000 pre-built lines in batches of 1,000, with one color per line and word wrap on. Each control uses its fast common approach: `AppendText` and `SetStyling` for Scintilla, batched `SelectedRtf` with redraw suspended for RichTextBox. Undo is disabled on both. Median of 3 runs.
 
-Scintilla uses native Boyer-Moore search (C++ Scintilla engine). RTB scans the full managed string and allocates a new string per search call.
+| Metric | Scintilla | RichTextBox |
+|--------|-----------|-------------|
+| Fill to 50k lines | **550 ms** | 2,516 ms |
+| Allocation during fill | **46 MB** | 1,441 MB |
+| Private memory over baseline | **43 MB** | 426 MB |
+| Batch at the cap, append and trim | 289 ms | **84 ms** |
+| Repaint | 1.55 ms | 1.61 ms |
+| Page up | 2.2 ms | 2.8 ms |
+| Find token near the end | **11 ms** | 275 ms |
+| Find absent token | **11 ms** | 252 ms |
+| Find first hit | **0.0013 ms** | 0.21 ms native, 23 ms via `RichTextBox.Find` |
 
----
-
-### FilterReapplyBenchmark — 50k history entries
-
-| Method | Mean | Alloc |
-|--------|------|-------|
-| CPU scan only (lower bound) | 228 μs | 1.59 KB |
-| Serilog re-emit filtered subset (Warning+) | **50,493 μs** | 5,502 KB |
-| Scintilla SetFilter(Warning) reapply | 421,492 μs | **1,758 KB** |
-
-Scintilla is 8.3× slower wall-clock but allocates 3.1× less. The key distinction: Serilog has no history buffer — the caller must hold the original data and re-emit the filtered subset. Scintilla's history buffer is the source of truth; `SetFilter` replays from it automatically.
+- Repaint and page up are effectively tied.
+- Scintilla is slower in the at-cap case. Scintilla remembers the lines waiting for word wrap as one range, so a trim at the start plus an append at the end queues the whole document to be wrapped again. The viewer avoids this by trimming in steps under load, which took its longest paint gap at the cap from about 105 ms to about 34 ms. This suite trims on every batch, as a plain use of the control would.
+- `RichTextBox.Find` allocates about 83 MB on every search that finds a match. That cost belongs to the WinForms wrapper: calling `EM_FINDTEXTEXW` directly allocates about 0.1 KB. Native search time for a token near the end is about the same as the wrapper's.
 
 ---
 
-### PaintBenchmark — pixel render, 5k lines
+## Limits
 
-| | Scintilla | RTB | Ratio |
-|---|---|---|---|
-| Production paint | **1.72 ms** | 1.73 ms | **≈ equivalent** |
-| Uncapped paint | **1.63 ms** | 1.48 ms | **+10% slower** |
-
-Effectively equivalent. Both rendering engines perform similarly for a pre-populated document.
-
----
-
-## Summary
-
-| Scenario | Scintilla vs Serilog+RTB |
-|----------|--------------------------|
-| **Enqueue throughput** | **1.4–9× faster** depending on volume |
-| **Memory allocation** | **6–24× less** — largest gap at sustained load |
-| **Search / Find** | **29× – 671,000× faster**, near-zero allocation |
-| **Pixel render** | Equivalent (±10%) |
-| **Drain / FullPipeline latency** | Higher — async rendering model, not comparable directly |
-| **Filter reapply wall-clock** | 8× slower, but 3× less allocation; built-in history is a unique feature |
-
-**Scintilla is the right choice for:** high-throughput logging, large document search/filter, memory-constrained environments.
-
-**Serilog+RTB is simpler for:** low-volume logging where throughput and search are not requirements.
-
----
-
-## Regression Policy
-
-| Scenario | Metric | Threshold | Action |
-|----------|--------|-----------|--------|
-| Enqueue throughput (no filter) | msg/s | ≥ 100,000 | Block merge |
-| Enqueue throughput (filter active) | msg/s | ≥ 80,000 | Block merge |
-| Filter replay (10k entries) | p95 latency | ≤ 50 ms | Block merge |
-| Search highlight (50k entries) | p95 latency | ≤ 100 ms | Warn |
-| Allocation per filtered batch | bytes | ≤ 4,096 B | Block merge |
-
-**Regression classification:**
-- < 5%: Acceptable, no action
-- 5–10%: Document root cause in PR description
-- > 10%: Block merge until mitigated or explicitly waived with written rationale
-
-`AllocationBudgetTests` unit tests act as a lightweight allocation gate in CI without requiring a full benchmark run. These must pass on every PR.
-
----
-
-## Infrastructure
-
-| File | Role |
-|------|------|
-| `BenchmarkHarness` | Shared factory methods (Scintilla viewer, Serilog sinks), uncapped sink wrapper (reflection bypass of `_maxLogLines`), drain/wait helpers, `OffscreenPainter`, level mapping |
-| `ScenarioDataFactory` | `BuildRealisticMixed()` + `RealisticMixedData` |
-| `InProcessBenchmarkConfig` | `InProcessEmitToolchain` (STA thread), 3 warmup / 8 iterations, `MemoryDiagnoser` |
-
-### Interpreting Results
-
-- **Mean**: Average execution time per iteration
-- **Allocated**: Managed heap allocation per iteration (`MemoryDiagnoser`)
-- **Ratio**: Relative to baseline (Serilog) — values < 1.0 mean Scintilla is faster/cheaper
-- **Gen0/Gen1/Gen2**: GC collection counts — lower is better for throughput
+- One machine, 3 runs, no statistical tests.
+- Hybrid cores are not pinned. One `logger` run measured the format rows about 1.5x slower partway through, while its discard rows did not change, so read small differences with care.
+- WinForms on .NET 8 only. `net48`, `net10.0-windows` and WPF are not measured.
+- Windows are visible but unfocused.
+- A single idle line is timed by polling, and both stacks reach its resolution of about 16 ms.
+- Messages are single-line text. JSON pretty-printing, exceptions, colorizers and linkifiers are not measured. Filter reapply is timed only by `FilterReplay_KeepsTheUiResponsive`, which uses a coarser probe.

@@ -22,8 +22,7 @@ flowchart LR
     C --> D["git push origin v0.x.y"]
     D --> E["GitHub Actions triggered"]
     E --> F["dotnet restore + build -c Release"]
-    F --> G["ILRepack merges LookupEngine"]
-    G --> H["dotnet pack → .nupkg"]
+    F --> H["dotnet pack → .nupkg"]
     H --> I["dotnet nuget push → nuget.org"]
 ```
 
@@ -71,7 +70,7 @@ git push origin main
 git push origin v0.0.4
 ```
 
-> The tag push triggers `.github/workflows/publish.yml`. The workflow runs on `windows-latest` and uses `InProcessEmitToolchain` which requires STA thread (Windows-only).
+> The tag push triggers `.github/workflows/publish.yml`, which runs on `windows-latest`.
 
 ### 5. Verify the publish
 
@@ -94,8 +93,8 @@ on:
 Steps executed:
 1. `actions/checkout@v4` with `submodules: recursive` — required for LookupEngine submodule
 2. `dotnet restore` on the main project
-3. `dotnet build -c Release` — triggers ILRepack to merge `LookupEngine.dll` into `ZLogger.Scintilla.dll`
-4. `dotnet pack -c Release --no-build` — packages the merged assembly
+3. `dotnet build -c Release` — compiles the LookupEngine source into `ZLogger.Scintilla.dll`
+4. `dotnet pack -c Release --no-build` — packages the assembly
 5. `dotnet nuget push` with `--skip-duplicate` — idempotent; safe to re-run if the tag already exists on NuGet
 
 ---
@@ -116,7 +115,7 @@ Steps executed:
 - Verify the tag was pushed to the remote: `git ls-remote --tags origin`
 - Tags must match the `v*` pattern (e.g. `v0.0.4`, not `0.0.4`)
 
-**ILRepack fails:**
+**LookupEngine source files are missing:**
 - Ensure the `external/LookupEngine` submodule is initialized: `git submodule update --init --recursive`
 - Build locally with `dotnet build ZLogger.Scintilla/ZLogger.Scintilla.csproj -c Release` to reproduce
 
