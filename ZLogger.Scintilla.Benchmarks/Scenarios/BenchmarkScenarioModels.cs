@@ -1,8 +1,0 @@
-namespace ZLogger.Scintilla.Benchmarks.Scenarios;
-
-public enum TokenDensity
-{
-    None = 0,
-    Medium = 1,
-    High = 2
-}
