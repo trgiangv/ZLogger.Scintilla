@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows.Forms;
 using ScintillaNET;
+using ZLogger.Scintilla.Controls;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 using ZLogger.Scintilla.Rendering;

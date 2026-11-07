@@ -1,4 +1,5 @@
 using System.Windows.Forms;
+using ZLogger.Scintilla.Controls;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 // ReSharper disable RedundantCast

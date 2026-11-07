@@ -278,10 +278,11 @@ ZLogger.Scintilla/
 ├── Public/          User-facing API (base class, interfaces, DI, themes, options)
 ├── Pipeline/        Log lifecycle: ingest → filter → prepare → UI dispatch
 ├── Rendering/       LogEntry → styled byte segments (formatter, highlighters, parsers)
-└── Services/        Direct Scintilla.NET control wrappers
+├── Services/        Direct Scintilla.NET control wrappers
+└── Controls/        WinForms controls: the editor and the find bar drawn on it
 ```
 
-### Models/ — 13 files
+### Models/ — 14 files
 
 | File | Role |
 |------|------|
@@ -293,6 +294,7 @@ ZLogger.Scintilla/
 | `StyleRange`, `TokenRange`, `TokenPayload` | Scintilla styling primitives |
 | `ParameterSpan` | Typed parameter metadata + `IsLeafType()` classification |
 | `ParsedPrefix`, `SearchPosition`, `SearchMatch` | Small value types |
+| `SearchOptions` | Match case / whole word / regex flags |
 | `LogConstants` | SCI message IDs, capacities, property keys |
 
 ### Public/ — 10 files
@@ -331,17 +333,24 @@ ZLogger.Scintilla/
 | `UrlScanner` | URL detection in UTF-8 text + linkification |
 | `RenderingChars` | Byte classification helpers |
 
-### Services/ — 7 files
+### Services/ — 6 files
 
 | File | Role |
 |------|------|
 | `ScintillaDocument` | UI thread: apply `PreparedBatch` → Scintilla, trim, follow the tail |
-| `LogScintillaControl` | Scintilla control that reports scrolling done by the user |
 | `ScintillaStyleService` | `SCI_SETSTYLINGEX`, dynamic style allocation |
-| `ScintillaSearchService` | Find, highlight, match position cache |
+| `ScintillaSearchService` | Find, highlight, match position cache, find-in-selection range |
 | `ScintillaInteractionService` | Click/hover → invoke link `Action` |
 | `StyleMapper` | `RenderSegment[]` → `StyleRange[]` |
 | `NativeWindowsHelper` | Win32 dark mode |
+
+### Controls/ — 3 files
+
+| File | Role |
+|------|------|
+| `LogScintillaControl` | Scintilla control that reports scrolling done by the user and sees shortcut keys first |
+| `LogFindBar` | Ctrl+F find bar drawn over the editor's top-right corner, as a child window so WPF shows it too |
+| `FindBarToolTip` | The find bar's tooltip, in the theme's colors |
 
 ---
 

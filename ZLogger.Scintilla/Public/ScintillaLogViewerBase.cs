@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Windows.Forms;
 using Microsoft.Extensions.Logging;
+using ZLogger.Scintilla.Controls;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Pipeline;
 using ZLogger.Scintilla.Rendering;
@@ -51,7 +52,6 @@ public abstract class ScintillaLogViewerBase : IDisposable
     private readonly Gate _stateGate = new();
     private readonly Gate _pumpGate = new();
     private readonly SemaphoreSlim _pumpWake = new(0, 1);
-    private readonly SearchCoordinator _search;
     private ScintillaLogProcessor? _processor;
     private volatile CultureInfo? _pumpCulture;
     private List<Action>? _disposeActions;
@@ -75,6 +75,10 @@ public abstract class ScintillaLogViewerBase : IDisposable
     public ScintillaNET.Scintilla ScintillaControl { get; }
 
     internal bool IncludeScopes => _options.IncludeScopes;
+
+    internal SearchCoordinator Search { get; }
+
+    internal LogFindBar FindBar { get; }
 
     protected ScintillaLogViewerBase(Action<ScintillaOptions>? configure)
     {
@@ -104,7 +108,8 @@ public abstract class ScintillaLogViewerBase : IDisposable
 
         var maxHistory = resolved.DisableHistory ? 0 : Math.Max(0, resolved.MaxHistoryEntries);
         _history = new LogHistoryBuffer(_metrics, maxHistory);
-        _search = new SearchCoordinator(_document, Dispatch);
+        Search = new SearchCoordinator(_document, Dispatch);
+        FindBar = new LogFindBar(control, Search, _document, _currentTheme);
 
         ApplyInitialStylesDeferred();
         ApplyNativeThemeToControl();
@@ -123,7 +128,7 @@ public abstract class ScintillaLogViewerBase : IDisposable
             var token = _cts.Token;
             var previous = _stoppingPump;
             _stoppingPump = null;
-            _pumpTask = Task.Run(() => PumpAsync(previous, token));
+            _pumpTask = Task.Run(() => PumpAsync(previous, token), token);
         }
     }
 
@@ -150,7 +155,7 @@ public abstract class ScintillaLogViewerBase : IDisposable
         cts.Cancel();
         if (onUiThread && pumpTask is { IsCompleted: false })
         {
-            _ = pumpTask.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), cts,
+            pumpTask.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), cts,
                 CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
         else
@@ -249,13 +254,13 @@ public abstract class ScintillaLogViewerBase : IDisposable
         RequestReplay();
     }
 
-    public void HighlightSearch(string pattern, bool useRegex = false) { ThrowIfDisposed(); _search.HighlightSearch(pattern, useRegex); }
-    public void ClearSearch() { ThrowIfDisposed(); _search.ClearSearch(); }
-    public SearchPosition FindNext() { ThrowIfDisposed(); return _search.FindNext(); }
-    public Task<SearchPosition> FindNextAsync(CancellationToken ct = default) { ThrowIfDisposed(); return _search.FindNextAsync(ct); }
-    public SearchPosition FindPrevious() { ThrowIfDisposed(); return _search.FindPrevious(); }
-    public Task<SearchPosition> FindPreviousAsync(CancellationToken ct = default) { ThrowIfDisposed(); return _search.FindPreviousAsync(ct); }
-    public Task<int> CountMatchesAsync(CancellationToken ct = default) { ThrowIfDisposed(); return _search.CountMatchesAsync(ct); }
+    public void HighlightSearch(string pattern, bool useRegex = false) { ThrowIfDisposed(); Search.HighlightSearch(pattern, useRegex); }
+    public void ClearSearch() { ThrowIfDisposed(); Search.ClearSearch(); }
+    public SearchPosition FindNext() { ThrowIfDisposed(); return Search.FindNext(); }
+    public Task<SearchPosition> FindNextAsync(CancellationToken ct = default) { ThrowIfDisposed(); return Search.FindNextAsync(ct); }
+    public SearchPosition FindPrevious() { ThrowIfDisposed(); return Search.FindPrevious(); }
+    public Task<SearchPosition> FindPreviousAsync(CancellationToken ct = default) { ThrowIfDisposed(); return Search.FindPreviousAsync(ct); }
+    public Task<int> CountMatchesAsync(CancellationToken ct = default) { ThrowIfDisposed(); return Search.CountMatchesAsync(ct); }
 
     public long RenderedMessages => _metrics.RenderedMessages;
     public long DroppedMessages => _metrics.DroppedMessages;
@@ -849,7 +854,11 @@ public abstract class ScintillaLogViewerBase : IDisposable
     private void RefreshStyles()
     {
         if (_disposed) return;
-        Dispatch(() => _document.ApplyThemeStyles(_renderStrategy, _currentTheme));
+        Dispatch(() =>
+        {
+            _document.ApplyThemeStyles(_renderStrategy, _currentTheme);
+            FindBar.ApplyTheme(_currentTheme);
+        });
     }
 
     private void ApplyInitialStylesDeferred()
