@@ -29,8 +29,31 @@ internal sealed class LogScintillaControl : ScintillaNET.Scintilla
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Func<Keys, bool>? CommandKeyHandler { get; set; }
 
+    /// <summary>Under a WinForms or WPF message loop, which preprocesses keys before dispatching them.</summary>
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData) =>
         CommandKeyHandler?.Invoke(keyData) == true || base.ProcessCmdKey(ref msg, keyData);
+
+    /// <summary>
+    /// Under a host's own message loop, such as Revit's, which dispatches keys straight to the focused window,
+    /// so <see cref="ProcessCmdKey"/> never runs. A key handled there does not arrive here.
+    /// </summary>
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (HandleCommandKey(e))
+            return;
+        base.OnKeyDown(e);
+    }
+
+    /// <summary>The same for a control placed on the editor, which receives its keys itself.</summary>
+    public bool HandleCommandKey(KeyEventArgs e)
+    {
+        if (CommandKeyHandler?.Invoke(e.KeyData) != true)
+            return false;
+
+        e.Handled = true;
+        e.SuppressKeyPress = true;
+        return true;
+    }
 
     protected override void WndProc(ref Message m)
     {

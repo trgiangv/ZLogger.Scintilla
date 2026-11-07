@@ -267,6 +267,130 @@ public sealed class FindBarTests
     }
 
     /// <summary>
+    /// Revit runs its own native message loop: no WinForms or WPF preprocessing, so keys go straight to the focused
+    /// window and ProcessCmdKey never sees them.
+    /// </summary>
+    [TestMethod]
+    public void FindBar_WorksUnderANativeHostMessageLoop()
+    {
+        Exception? failure = null;
+        var results = new List<string>();
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                results.AddRange(RunUnderNativeLoop());
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        })
+        {
+            IsBackground = true
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(30)), "The native loop never finished.");
+        Assert.IsNull(failure, failure?.ToString());
+        CollectionAssert.AreEqual(new[] { "opened", "typed", "navigated", "closed" }, results);
+    }
+
+    private static List<string> RunUnderNativeLoop()
+    {
+        var steps = new List<string>();
+        using var services = new ServiceCollection()
+            .AddLogging(logging => logging.AddZLoggerScintillaWinForms())
+            .BuildServiceProvider();
+        var viewer = services.GetRequiredService<ScintillaLogViewer>();
+        var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("T");
+        using var form = new Form
+        {
+            ShowInTaskbar = false,
+            StartPosition = FormStartPosition.Manual,
+            Location = new System.Drawing.Point(60, 60),
+            ClientSize = new System.Drawing.Size(800, 300)
+        };
+        form.Controls.Add(viewer.ScintillaControl);
+        form.Show();
+        viewer.Start();
+        logger.LogInformation("first abc");
+        logger.LogInformation("second abc");
+        Pump(500);
+        viewer.ScintillaControl.Focus();
+        var editor = viewer.ScintillaControl;
+        var text = editor.Text;
+        var secondMatch = text.IndexOf("abc", text.IndexOf("abc", StringComparison.Ordinal) + 1, StringComparison.Ordinal);
+
+        var bar = viewer.FindBar;
+        PostMessage(editor.Handle, WmKeyDown, (IntPtr)Keys.F3, IntPtr.Zero);
+        Pump(200);
+        if (bar.Visible)
+            steps.Add("opened");
+
+        var input = bar.Controls.OfType<TextBox>().Single();
+        foreach (var c in "abc")
+            PostMessage(input.Handle, WmChar, (IntPtr)c, IntPtr.Zero);
+        Pump(400); // past the typing debounce, which moves to the first match
+        if (input.Text == "abc")
+            steps.Add("typed");
+
+        PostMessage(input.Handle, WmKeyDown, (IntPtr)Keys.Enter, IntPtr.Zero);
+        Pump(200);
+        if (secondMatch > 0 && editor.CurrentPosition == secondMatch)
+            steps.Add("navigated");
+
+        PostMessage(input.Handle, WmKeyDown, (IntPtr)Keys.Escape, IntPtr.Zero);
+        Pump(200);
+        if (!bar.Visible)
+            steps.Add("closed");
+
+        viewer.Dispose();
+        return steps;
+    }
+
+    /// <summary>A loop like a native host's: translate and dispatch, nothing else.</summary>
+    private static void Pump(int milliseconds)
+    {
+        var until = Environment.TickCount + milliseconds;
+        while (unchecked(Environment.TickCount - until) < 0)
+        {
+            while (PeekMessage(out var msg, IntPtr.Zero, 0, 0, 1))
+            {
+                TranslateMessage(ref msg);
+                DispatchMessage(ref msg);
+            }
+            Thread.Sleep(10);
+        }
+    }
+
+    private const int WmChar = 0x0102;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativeMsg
+    {
+        public IntPtr hwnd;
+        public int message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public int time;
+        public int ptX, ptY;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PeekMessage(out NativeMsg msg, IntPtr hwnd, int min, int max, int remove);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool TranslateMessage(ref NativeMsg msg);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr DispatchMessage(ref NativeMsg msg);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>
     /// In WPF the keys reach the editor through the host's keyboard sink, not through a WinForms message loop.
     /// </summary>
     [TestMethod]

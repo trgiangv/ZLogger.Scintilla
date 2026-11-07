@@ -118,6 +118,7 @@ internal sealed class LogFindBar : Control
         };
         _input.HandleCreated += (_, _) => SendMessage(_input.Handle, EmSetCueBanner, (IntPtr)1, "Find");
         _input.TextChanged += OnInputTextChanged;
+        _input.KeyDown += (_, e) => editor.HandleCommandKey(e);
         _input.GotFocus += OnInputGotFocus;
         _input.LostFocus += (_, _) => Invalidate();
         Controls.Add(_input);
