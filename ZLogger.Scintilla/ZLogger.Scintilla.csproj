@@ -7,17 +7,15 @@
         <LangVersion>latest</LangVersion>
         <UseWindowsForms>true</UseWindowsForms>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <IsRepackable Condition="'$(Configuration)' == 'Release'">true</IsRepackable>
-        <ILRepackInternalize>false</ILRepackInternalize>
-        <ILRepackUnion>false</ILRepackUnion>
-        <ILRepackParallel>false</ILRepackParallel>
+        <!-- Keeps this assembly's internal polyfills from being visible through InternalsVisibleTo. -->
+        <PolyUseEmbeddedAttribute>true</PolyUseEmbeddedAttribute>
     </PropertyGroup>
 
     <PropertyGroup>
         <PackageId>ZLogger.Scintilla</PackageId>
         <Version>0.0.9</Version>
         <Authors>trgiangv</Authors>
-        <Description>High-throughput, syntax-highlighted log viewer for WinForms and WPF, built on Scintilla.NET and ZLogger.</Description>
+        <Description>Log viewer control for WinForms and WPF that shows ZLogger output color-coded, with level filtering, search, clickable links and pretty-printed JSON. Built on Scintilla.</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageProjectUrl>https://github.com/trgiangv/ZLogger.Scintilla</PackageProjectUrl>
         <RepositoryUrl>https://github.com/trgiangv/ZLogger.Scintilla</RepositoryUrl>
@@ -37,20 +35,45 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="System.Threading.Channels"/>
-        <PackageReference Include="CommunityToolkit.HighPerformance"/>
-        <PackageReference Include="Scintilla5.NET"/>
+        <!-- Part of the runtime on modern targets, so only net48 needs them as packages. -->
+        <PackageReference Include="System.Threading.Channels" Condition="$(TargetFramework.StartsWith('net4'))"/>
+        <!-- ZLogger asks for an older version than LookupEngine needs, and net48 apps get what is declared here. -->
+        <PackageReference Include="System.Text.Json" Condition="$(TargetFramework.StartsWith('net4'))"/>
+        <!-- Scintilla5.NET delivers its native DLLs to net48 apps through a build target, which NuGet
+             excludes from transitive dependencies unless the dependency keeps its build assets. -->
+        <PackageReference Include="Scintilla5.NET" PrivateAssets="none"/>
         <PackageReference Include="Zlogger"/>
-        <PackageReference Include="ILRepack.Lib.MSBuild.Task">
+    </ItemGroup>
+
+    <!-- On net48, Utf8StringInterpolation (from ZLogger) already exposes System.Buffers.ArrayBufferWriter<T>, so
+         Polyfill's copy would only shadow it (CS0436). Using the imported one also matches the type ZLogger uses. -->
+    <ItemGroup Condition="$(TargetFramework.StartsWith('net4'))">
+        <Compile Remove="$(NuGetPackageRoot)polyfill\*\contentFiles\cs\*\ArrayBufferWriter.cs"/>
+    </ItemGroup>
+
+    <!-- LookupEngine is compiled in as source. Merging its built assemblies would bring one more copy of the
+         Polyfill and JetBrains.Annotations source packages per assembly, renamed with random GUIDs, which
+         no Polyfill option can prevent because each copy is compiled before the merge. -->
+    <ItemGroup>
+        <Compile Include="..\external\LookupEngine\source\LookupEngine\**\*.cs;..\external\LookupEngine\source\LookupEngine.Abstractions\**\*.cs"
+                 Exclude="..\external\LookupEngine\source\*\bin\**;..\external\LookupEngine\source\*\obj\**"
+                 Link="LookupEngine\%(RecursiveDir)%(Filename)%(Extension)"/>
+        <PackageReference Include="JetBrains.Annotations.Sources">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
+        <Using Include="JetBrains.Annotations"/>
     </ItemGroup>
 
+    <!-- The usings LookupEngine's source expects from its own project settings. Added by hand rather than with
+         ImplicitUsings, which would also bring System.Windows.Forms and System.Drawing into its files. -->
     <ItemGroup>
-        <ProjectReference Include="..\external\LookupEngine\source\LookupEngine\LookupEngine.csproj">
-            <PrivateAssets>all</PrivateAssets>
-        </ProjectReference>
+        <Using Include="System"/>
+        <Using Include="System.Collections.Generic"/>
+        <Using Include="System.IO"/>
+        <Using Include="System.Linq"/>
+        <Using Include="System.Threading"/>
+        <Using Include="System.Threading.Tasks"/>
     </ItemGroup>
 
 </Project>
