@@ -271,7 +271,9 @@ public sealed class FindBarTests
     /// window and ProcessCmdKey never sees them.
     /// </summary>
     [TestMethod]
-    public void FindBar_WorksUnderANativeHostMessageLoop()
+    [DataRow(false, DisplayName = "plain native loop")]
+    [DataRow(true, DisplayName = "native loop that calls IsDialogMessage, as MFC hosts do")]
+    public void FindBar_WorksUnderANativeHostMessageLoop(bool dialogLoop)
     {
         Exception? failure = null;
         var results = new List<string>();
@@ -279,7 +281,7 @@ public sealed class FindBarTests
         {
             try
             {
-                results.AddRange(RunUnderNativeLoop());
+                results.AddRange(RunUnderNativeLoop(dialogLoop));
             }
             catch (Exception ex)
             {
@@ -294,10 +296,10 @@ public sealed class FindBarTests
 
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(30)), "The native loop never finished.");
         Assert.IsNull(failure, failure?.ToString());
-        CollectionAssert.AreEqual(new[] { "opened", "typed", "navigated", "closed" }, results);
+        CollectionAssert.AreEqual(new[] { "opened", "typed", "navigated", "closed" }, results, "Steps done: " + string.Join(", ", results));
     }
 
-    private static List<string> RunUnderNativeLoop()
+    private static List<string> RunUnderNativeLoop(bool dialogLoop)
     {
         var steps = new List<string>();
         using var services = new ServiceCollection()
@@ -317,52 +319,60 @@ public sealed class FindBarTests
         viewer.Start();
         logger.LogInformation("first abc");
         logger.LogInformation("second abc");
-        Pump(500);
+        PumpUntil(dialogLoop ? form.Handle : IntPtr.Zero, () => viewer.ScintillaControl.Text.Contains("second abc"));
         viewer.ScintillaControl.Focus();
         var editor = viewer.ScintillaControl;
         var text = editor.Text;
         var secondMatch = text.IndexOf("abc", text.IndexOf("abc", StringComparison.Ordinal) + 1, StringComparison.Ordinal);
 
+        var dialog = dialogLoop ? form.Handle : IntPtr.Zero;
         var bar = viewer.FindBar;
         PostMessage(editor.Handle, WmKeyDown, (IntPtr)Keys.F3, IntPtr.Zero);
-        Pump(200);
-        if (bar.Visible)
+        if (PumpUntil(dialog, () => bar.Visible))
             steps.Add("opened");
 
         var input = bar.Controls.OfType<TextBox>().Single();
         foreach (var c in "abc")
             PostMessage(input.Handle, WmChar, (IntPtr)c, IntPtr.Zero);
-        Pump(400); // past the typing debounce, which moves to the first match
-        if (input.Text == "abc")
+        // Typing moves to the first match once its debounce has passed.
+        var firstMatch = text.IndexOf("abc", StringComparison.Ordinal);
+        if (PumpUntil(dialog, () => input.Text == "abc" && editor.CurrentPosition == firstMatch))
             steps.Add("typed");
 
         PostMessage(input.Handle, WmKeyDown, (IntPtr)Keys.Enter, IntPtr.Zero);
-        Pump(200);
-        if (secondMatch > 0 && editor.CurrentPosition == secondMatch)
+        if (PumpUntil(dialog, () => secondMatch > 0 && editor.CurrentPosition == secondMatch))
             steps.Add("navigated");
 
         PostMessage(input.Handle, WmKeyDown, (IntPtr)Keys.Escape, IntPtr.Zero);
-        Pump(200);
-        if (!bar.Visible)
+        if (PumpUntil(dialog, () => !bar.Visible))
             steps.Add("closed");
 
         viewer.Dispose();
         return steps;
     }
 
-    /// <summary>A loop like a native host's: translate and dispatch, nothing else.</summary>
-    private static void Pump(int milliseconds)
+    /// <summary>
+    /// A loop like a native host's: translate and dispatch, nothing else; with a dialog, IsDialogMessage first.
+    /// Runs until <paramref name="done"/> holds, or for three seconds.
+    /// </summary>
+    private static bool PumpUntil(IntPtr dialog, Func<bool> done)
     {
-        var until = Environment.TickCount + milliseconds;
+        var until = Environment.TickCount + 3000;
         while (unchecked(Environment.TickCount - until) < 0)
         {
+            if (done())
+                return true;
             while (PeekMessage(out var msg, IntPtr.Zero, 0, 0, 1))
             {
+                if (dialog != IntPtr.Zero && IsDialogMessage(dialog, ref msg))
+                    continue;
                 TranslateMessage(ref msg);
                 DispatchMessage(ref msg);
             }
             Thread.Sleep(10);
         }
+
+        return done();
     }
 
     private const int WmChar = 0x0102;
@@ -383,6 +393,9 @@ public sealed class FindBarTests
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool TranslateMessage(ref NativeMsg msg);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsDialogMessage(IntPtr dialog, ref NativeMsg msg);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr DispatchMessage(ref NativeMsg msg);

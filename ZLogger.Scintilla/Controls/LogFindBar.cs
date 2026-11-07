@@ -109,7 +109,7 @@ internal sealed class LogFindBar : Control
         TabStop = false;
         Visible = false;
 
-        _input = new TextBox
+        _input = new FindTextBox
         {
             BorderStyle = System.Windows.Forms.BorderStyle.None,
             Font = _textFont,
@@ -724,6 +724,23 @@ internal sealed class LogFindBar : Control
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+
+    /// <summary>
+    /// A text box that asks for every key. A native host that runs IsDialogMessage, as MFC hosts such as Revit do,
+    /// would otherwise turn Enter and Escape into the parent's OK and Cancel before the box sees them.
+    /// </summary>
+    private sealed class FindTextBox : TextBox
+    {
+        private const int WmGetDlgCode = 0x0087;
+        private const int DlgcWantAllKeys = 0x0004;
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg == WmGetDlgCode)
+                m.Result = (IntPtr)((long)m.Result | DlgcWantAllKeys);
+        }
+    }
 
     /// <summary>Icons from the Windows icon font, with plain characters where it is missing.</summary>
     private sealed record Glyphs(string Up, string Down, string Selection, string Close)
