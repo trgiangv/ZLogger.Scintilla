@@ -10,10 +10,8 @@ public partial class MainWindow
     private readonly ScintillaLogViewerWpf _viewer;
     private readonly ILogger<MainWindow> _logger;
     private readonly DispatcherTimer _metricsTimer;
-    private readonly DispatcherTimer _searchDebounceTimer;
 
     private CancellationTokenSource? _floodCts;
-    private CancellationTokenSource? _searchCountCts;
     private Task? _floodTask;
     private long _incomingCount;
     private long _lastIncomingCount;
@@ -34,13 +32,6 @@ public partial class MainWindow
         _viewer.SetPrettyJson(PrettyJsonCheckBox.IsChecked == true);
         SeedInitialLogs();
 
-        _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
-        _searchDebounceTimer.Tick += (_, _) =>
-        {
-            _searchDebounceTimer.Stop();
-            HighlightSearchVisible();
-        };
-
         _metricsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _metricsTimer.Tick += (_, _) => RefreshMetrics();
         _metricsTimer.Start();
@@ -55,10 +46,6 @@ public partial class MainWindow
     protected override void OnClosed(EventArgs e)
     {
         _metricsTimer.Stop();
-        _searchDebounceTimer.Stop();
-        _searchCountCts?.Cancel();
-        _searchCountCts?.Dispose();
-        _searchCountCts = null;
         StopFloodAsync().GetAwaiter().GetResult();
         _viewer.Stop();
         _viewer.Dispose();
@@ -90,22 +77,6 @@ public partial class MainWindow
         {
             _viewer.Clear();
             Interlocked.Exchange(ref _incomingCount, 0);
-        };
-        FindNextButton.Click += (_, _) => FindNext();
-        FindPreviousButton.Click += (_, _) => FindPrevious();
-        SearchTextBox.TextChanged += (_, _) =>
-        {
-            _searchDebounceTimer.Stop();
-            _searchDebounceTimer.Start();
-        };
-        SearchTextBox.KeyDown += (_, args) =>
-        {
-            if (args.Key == System.Windows.Input.Key.Enter)
-            {
-                _searchDebounceTimer.Stop();
-                FindNext();
-                args.Handled = true;
-            }
         };
         LevelFilterCombo.SelectionChanged += (_, _) =>
             _viewer.SetFilter(ParseFilterLevel(LevelFilterCombo.SelectedItem?.ToString()));
@@ -176,74 +147,6 @@ public partial class MainWindow
         _floodCts = null;
         StartFloodButton.IsEnabled = true;
         StopFloodButton.IsEnabled = false;
-    }
-
-    private void FindNext()
-    {
-        var pattern = SearchTextBox.Text;
-        if (string.IsNullOrWhiteSpace(pattern))
-            return;
-
-        var pos = _viewer.FindNext();
-        SearchStatusTextBlock.Text = pos.Found ? pos.ToString() : "not found";
-    }
-
-    private void FindPrevious()
-    {
-        var pattern = SearchTextBox.Text;
-        if (string.IsNullOrWhiteSpace(pattern))
-            return;
-
-        var pos = _viewer.FindPrevious();
-        SearchStatusTextBlock.Text = pos.Found ? pos.ToString() : "not found";
-    }
-
-    private void HighlightSearchVisible()
-    {
-        var pattern = SearchTextBox.Text;
-        if (string.IsNullOrEmpty(pattern))
-        {
-            _viewer.ClearSearch();
-            SearchStatusTextBlock.Text = "matches: 0";
-            return;
-        }
-
-        _viewer.HighlightSearch(pattern);
-        ScheduleTotalMatchCount(pattern);
-    }
-
-    private void ScheduleTotalMatchCount(string pattern)
-    {
-        _searchCountCts?.Cancel();
-        _searchCountCts?.Dispose();
-        _searchCountCts = null;
-
-        if (string.IsNullOrWhiteSpace(pattern))
-        {
-            SearchStatusTextBlock.Text = "matches: 0";
-            return;
-        }
-
-        SearchStatusTextBlock.Text = "matches: ...";
-        var cts = new CancellationTokenSource();
-        _searchCountCts = cts;
-        Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(120, cts.Token).ConfigureAwait(false);
-                var total = await _viewer.CountMatchesAsync(cts.Token).ConfigureAwait(false);
-                if (cts.IsCancellationRequested)
-                    return;
-
-                _ = Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    if (_searchCountCts == cts)
-                        SearchStatusTextBlock.Text = $"matches: {total:n0}";
-                }));
-            }
-            catch (OperationCanceledException) { }
-        }, cts.Token);
     }
 
     private void RefreshMetrics()

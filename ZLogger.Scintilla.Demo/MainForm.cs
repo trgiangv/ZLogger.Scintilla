@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Extensions.Logging;
-using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 
 namespace ZLogger.Scintilla.Demo;
@@ -21,20 +20,13 @@ internal sealed class MainForm : Form
     private readonly Button _clearButton = new() { Text = "Clear", Width = 80 };
     private readonly Button _emitSamplesButton = new() { Text = "Emit Samples", Width = 110 };
 
-    private readonly TextBox _searchTextBox = new() { Width = 240 };
-    private readonly CheckBox _regexCheckBox = new() { AutoSize = true, Text = "Regex" };
-    private readonly Button _findNextButton = new() { Text = "Find Next", Width = 100 };
-    private readonly Button _findPreviousButton = new() { Text = "Find Previous", Width = 110 };
     private readonly ComboBox _levelFilterCombo = new() { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly CheckBox _prettyJsonCheckBox = new() { AutoSize = true, Text = "PrettyJson", Checked = true };
     private readonly CheckBox _lineNumbersCheckBox = new() { AutoSize = true, Text = "Line Numbers" };
     private readonly ComboBox _themeCombo = new() { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly Label _searchStatusLabel = new() { AutoSize = true, Text = "matches: 0" };
     private readonly Label _metricsLabel = new() { AutoSize = true };
-    private readonly System.Windows.Forms.Timer _searchDebounceTimer = new() { Interval = 180 };
 
     private CancellationTokenSource? _floodCts;
-    private CancellationTokenSource? _searchCountCts;
     private Task? _floodTask;
     private long _incomingCount;
     private long _lastIncomingCount;
@@ -65,10 +57,6 @@ internal sealed class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         _metricsTimer.Stop();
-        _searchDebounceTimer.Stop();
-        _searchCountCts?.Cancel();
-        _searchCountCts?.Dispose();
-        _searchCountCts = null;
         StopFloodAsync().GetAwaiter().GetResult();
         _viewer.Stop();
         _viewer.Dispose();
@@ -120,12 +108,6 @@ internal sealed class MainForm : Form
         toolbar.Controls.Add(_lineNumbersCheckBox);
         toolbar.Controls.Add(new Label { Text = "Theme:", AutoSize = true, Margin = new Padding(12, 8, 0, 0) });
         toolbar.Controls.Add(_themeCombo);
-        toolbar.Controls.Add(new Label { Text = "Search:", AutoSize = true, Margin = new Padding(12, 8, 0, 0) });
-        toolbar.Controls.Add(_searchTextBox);
-        toolbar.Controls.Add(_regexCheckBox);
-        toolbar.Controls.Add(_findNextButton);
-        toolbar.Controls.Add(_findPreviousButton);
-        toolbar.Controls.Add(_searchStatusLabel);
         toolbar.Controls.Add(new Label { Text = "  ", AutoSize = true });
         toolbar.Controls.Add(_metricsLabel);
 
@@ -143,28 +125,6 @@ internal sealed class MainForm : Form
             Interlocked.Exchange(ref _incomingCount, 0);
         };
         _emitSamplesButton.Click += (_, _) => EmitShowcaseLogs();
-        _findNextButton.Click += (_, _) => FindNext();
-        _findPreviousButton.Click += (_, _) => FindPrevious();
-        _searchTextBox.KeyDown += (_, args) =>
-        {
-            if (args.KeyCode == Keys.Enter)
-            {
-                _searchDebounceTimer.Stop();
-                FindNext();
-                args.Handled = true;
-                args.SuppressKeyPress = true;
-            }
-        };
-        _searchDebounceTimer.Tick += (_, _) =>
-        {
-            _searchDebounceTimer.Stop();
-            HighlightSearchVisible();
-        };
-        _searchTextBox.TextChanged += (_, _) =>
-        {
-            _searchDebounceTimer.Stop();
-            _searchDebounceTimer.Start();
-        };
         _levelFilterCombo.SelectedIndexChanged += (_, _) =>
             _viewer.SetFilter(ParseFilterLevel(_levelFilterCombo.SelectedItem?.ToString()));
         _prettyJsonCheckBox.CheckedChanged += (_, _) =>
@@ -350,79 +310,6 @@ internal sealed class MainForm : Form
         _stopFloodButton.Enabled = false;
     }
 
-    private void FindNext()
-    {
-        var pattern = _searchTextBox.Text;
-        if (string.IsNullOrWhiteSpace(pattern))
-            return;
-
-        var pos = _viewer.FindNext();
-        UpdateSearchStatus(pos);
-    }
-
-    private void FindPrevious()
-    {
-        var pattern = _searchTextBox.Text;
-        if (string.IsNullOrWhiteSpace(pattern))
-            return;
-
-        var pos = _viewer.FindPrevious();
-        UpdateSearchStatus(pos);
-    }
-
-    private void HighlightSearchVisible()
-    {
-        var pattern = _searchTextBox.Text;
-        if (string.IsNullOrEmpty(pattern))
-        {
-            _viewer.ClearSearch();
-            _searchStatusLabel.Text = "matches: 0";
-            return;
-        }
-
-        _viewer.HighlightSearch(pattern, _regexCheckBox.Checked);
-        ScheduleTotalMatchCount(pattern);
-    }
-
-    private void UpdateSearchStatus(SearchPosition pos)
-    {
-        _searchStatusLabel.Text = pos.Found ? pos.ToString() : "not found";
-    }
-
-    private void ScheduleTotalMatchCount(string pattern)
-    {
-        _searchCountCts?.Cancel();
-        _searchCountCts?.Dispose();
-        _searchCountCts = null;
-
-        if (string.IsNullOrWhiteSpace(pattern))
-        {
-            _searchStatusLabel.Text = "matches: 0";
-            return;
-        }
-
-        _searchStatusLabel.Text = "matches: ...";
-        var cts = new CancellationTokenSource();
-        _searchCountCts = cts;
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(120, cts.Token).ConfigureAwait(false);
-                var total = await _viewer.CountMatchesAsync(cts.Token).ConfigureAwait(false);
-                if (cts.IsCancellationRequested || IsDisposed)
-                    return;
-
-                BeginInvoke(() =>
-                {
-                    if (!IsDisposed && _searchCountCts == cts)
-                        _searchStatusLabel.Text = $"matches: {total:n0}";
-                });
-            }
-            catch (OperationCanceledException) { }
-        }, cts.Token);
-    }
-
     private void RefreshMetrics()
     {
         var incoming = Interlocked.Read(ref _incomingCount);
@@ -463,7 +350,6 @@ internal sealed class MainForm : Form
             _logger.ZLogError($"SMOKE scope-filter validation id={Guid.NewGuid()}");
             await Task.Delay(300).ConfigureAwait(true);
 
-            _searchTextBox.Text = "scope-filter";
             _viewer.HighlightSearch("scope-filter");
             await Task.Delay(400).ConfigureAwait(true);
             var linesAfterScopeFilter = GetCurrentLineCount();
