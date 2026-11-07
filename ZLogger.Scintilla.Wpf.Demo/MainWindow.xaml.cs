@@ -31,6 +31,7 @@ public partial class MainWindow
         ViewerContainer.Content = _viewer.HostElement;
         InitializeControls();
         HookEvents();
+        _viewer.SetPrettyJson(PrettyJsonCheckBox.IsChecked == true);
         SeedInitialLogs();
 
         _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
@@ -77,7 +78,6 @@ public partial class MainWindow
             nameof(LogLevel.Critical)
         };
         LevelFilterCombo.SelectedIndex = 0;
-        PrettyJsonCheckBox.IsChecked = true;
         ThemeCombo.ItemsSource = new[] { "Dark", "Light" };
         ThemeCombo.SelectedItem = "Dark";
     }
@@ -140,21 +140,23 @@ public partial class MainWindow
         StartFloodButton.IsEnabled = false;
         StopFloodButton.IsEnabled = true;
 
-        _floodTask = Task.Run(async () =>
+        _floodTask = Task.Run(() => FloodAsync(token), token);
+    }
+
+    private async Task FloodAsync(CancellationToken token)
+    {
+        var i = 0;
+        while (!token.IsCancellationRequested)
         {
-            var i = 0;
-            while (!token.IsCancellationRequested)
-            {
-                var id = i++;
-                Interlocked.Increment(ref _incomingCount);
-                _logger.ZLogInformation(
-                    $"wpf flood index={id}, traceId={Guid.NewGuid()}, uniqueId={"8d2f3f31-2b9f-4f6e-a18d-3e7a8f3b1c2d-0001a2b3"}");
-                if (id % 10 == 0) _logger.ZLogWarning($"WPF warning at index={id}");
-                if (id % 41 == 0) _logger.ZLogError($"WPF failure at index={id}");
-                if (id % 1000 == 0)
-                    await Task.Delay(5, token).ConfigureAwait(false);
-            }
-        }, token);
+            var id = i++;
+            Interlocked.Increment(ref _incomingCount);
+            _logger.ZLogInformation(
+                $"wpf flood index={id}, traceId={Guid.NewGuid()}, uniqueId={"8d2f3f31-2b9f-4f6e-a18d-3e7a8f3b1c2d-0001a2b3"}");
+            if (id % 10 == 0) _logger.ZLogWarning($"WPF warning at index={id}");
+            if (id % 41 == 0) _logger.ZLogError($"WPF failure at index={id}");
+            if (id % 1000 == 0)
+                await Task.Delay(5, token).ConfigureAwait(false);
+        }
     }
 
     private async Task StopFloodAsync()
@@ -198,7 +200,7 @@ public partial class MainWindow
 
     private void HighlightSearchVisible()
     {
-        var pattern = SearchTextBox.Text ?? string.Empty;
+        var pattern = SearchTextBox.Text;
         if (string.IsNullOrEmpty(pattern))
         {
             _viewer.ClearSearch();
@@ -225,7 +227,7 @@ public partial class MainWindow
         SearchStatusTextBlock.Text = "matches: ...";
         var cts = new CancellationTokenSource();
         _searchCountCts = cts;
-        _ = Task.Run(async () =>
+        Task.Run(async () =>
         {
             try
             {
@@ -234,7 +236,7 @@ public partial class MainWindow
                 if (cts.IsCancellationRequested)
                     return;
 
-                Dispatcher.BeginInvoke(new Action(() =>
+                _ = Dispatcher.BeginInvoke(new Action(() =>
                 {
                     if (_searchCountCts == cts)
                         SearchStatusTextBlock.Text = $"matches: {total:n0}";

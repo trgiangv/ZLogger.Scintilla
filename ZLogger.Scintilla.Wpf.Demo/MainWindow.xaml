@@ -41,10 +41,6 @@
                       Margin="0,6,8,0"
                       Content="PrettyJson"
                       IsChecked="True" />
-            <CheckBox x:Name="TokenCallbackCheckBox"
-                      Margin="0,6,8,0"
-                      Content="Token Callback"
-                      IsChecked="True" />
             <CheckBox x:Name="LineNumbersCheckBox"
                       Margin="0,6,8,0"
                       Content="Line Numbers" />

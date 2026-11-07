@@ -54,6 +54,7 @@ internal sealed class MainForm : Form
 
         BuildLayout();
         HookEvents();
+        _viewer.SetPrettyJson(_prettyJsonCheckBox.Checked);
         SeedInitialLogs();
 
         _metricsTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -266,7 +267,7 @@ internal sealed class MainForm : Form
         _logger.ZLogInformation($"=== IEnumerable PARAMETER TESTS ===");
         
         
-        var ids = new List<ElementId> { new ElementId(1001), new ElementId(1002), new ElementId(1003) };
+        var ids = new List<ElementId> { new(1001), new(1002), new(1003) };
         _logger.ZLogInformation($"Selected element IDs: {ids}");
 
         var names = new[] { "Wall", "Floor", "Roof", "Column", "Beam" };
@@ -303,29 +304,31 @@ internal sealed class MainForm : Form
         _startFloodButton.Enabled = false;
         _stopFloodButton.Enabled = true;
 
-        _floodTask = Task.Run(async () =>
+        _floodTask = Task.Run(() => FloodAsync(token), token);
+    }
+
+    private async Task FloodAsync(CancellationToken token)
+    {
+        var i = 0;
+        while (!token.IsCancellationRequested)
         {
-            var i = 0;
-            while (!token.IsCancellationRequested)
+            var id = i++;
+            Interlocked.Increment(ref _incomingCount);
+            using var _ = _logger.BeginScope(new Dictionary<string, object?>
             {
-                var id = i++;
-                Interlocked.Increment(ref _incomingCount);
-                using var _ = _logger.BeginScope(new Dictionary<string, object?>
-                {
-                    ["Flow"] = "Flood",
-                    ["Batch"] = id / 1000,
-                    ["ElementId"] = id % 200_000
-                });
-                _logger.ZLogInformation(
-                    $"flood index={id}, traceId={Guid.NewGuid()}, uniqueId={"8d2f3f31-2b9f-4f6e-a18d-3e7a8f3b1c2d-0001a2b3"}, ifcGuid={"2Zw$n7f8AJvQk4r7sP9mA$"}");
-                if (id % 10 == 0)
-                    _logger.ZLogWarning($"Warning sample at index={id}");
-                if (id % 41 == 0)
-                    _logger.ZLogError($"Failure at index={id}");
-                if (id % 1000 == 0)
-                    await Task.Delay(5, token).ConfigureAwait(false);
-            }
-        }, token);
+                ["Flow"] = "Flood",
+                ["Batch"] = id / 1000,
+                ["ElementId"] = id % 200_000
+            });
+            _logger.ZLogInformation(
+                $"flood index={id}, traceId={Guid.NewGuid()}, uniqueId={"8d2f3f31-2b9f-4f6e-a18d-3e7a8f3b1c2d-0001a2b3"}, ifcGuid={"2Zw$n7f8AJvQk4r7sP9mA$"}");
+            if (id % 10 == 0)
+                _logger.ZLogWarning($"Warning sample at index={id}");
+            if (id % 41 == 0)
+                _logger.ZLogError($"Failure at index={id}");
+            if (id % 1000 == 0)
+                await Task.Delay(5, token).ConfigureAwait(false);
+        }
     }
 
     private async Task StopFloodAsync()
@@ -369,7 +372,7 @@ internal sealed class MainForm : Form
 
     private void HighlightSearchVisible()
     {
-        var pattern = _searchTextBox.Text ?? string.Empty;
+        var pattern = _searchTextBox.Text;
         if (string.IsNullOrEmpty(pattern))
         {
             _viewer.ClearSearch();
@@ -410,11 +413,11 @@ internal sealed class MainForm : Form
                 if (cts.IsCancellationRequested || IsDisposed)
                     return;
 
-                BeginInvoke(new Action(() =>
+                BeginInvoke(() =>
                 {
                     if (!IsDisposed && _searchCountCts == cts)
                         _searchStatusLabel.Text = $"matches: {total:n0}";
-                }));
+                });
             }
             catch (OperationCanceledException) { }
         }, cts.Token);
@@ -447,7 +450,6 @@ internal sealed class MainForm : Form
             await Task.Delay(1800).ConfigureAwait(true);
 
             _levelFilterCombo.SelectedItem = nameof(LogLevel.Error);
-            _viewer.SetFilter(LogLevel.Error);
             await Task.Delay(600).ConfigureAwait(true);
 
             await StopFloodAsync().ConfigureAwait(true);
@@ -461,7 +463,6 @@ internal sealed class MainForm : Form
             _logger.ZLogError($"SMOKE scope-filter validation id={Guid.NewGuid()}");
             await Task.Delay(300).ConfigureAwait(true);
 
-            _viewer.SetFilter(LogLevel.Error);
             _searchTextBox.Text = "scope-filter";
             _viewer.HighlightSearch("scope-filter");
             await Task.Delay(400).ConfigureAwait(true);

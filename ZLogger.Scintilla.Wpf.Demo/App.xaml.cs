@@ -6,7 +6,7 @@ using ZLogger.Scintilla.Public;
 
 namespace ZLogger.Scintilla.Wpf.Demo;
 
-public partial class App : System.Windows.Application
+public partial class App
 {
     private IHost? _host;
 
