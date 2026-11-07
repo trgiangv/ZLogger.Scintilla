@@ -155,7 +155,7 @@ public sealed class FindBarTests
             var end = live.Control.DirectMessage(LogConstants.SciGetLength);
             live.Control.DirectMessage(LogConstants.SciSetSel, IntPtr.Zero, end);
         });
-        Assert.IsTrue(live.WaitFor(() => live.Viewer.FindBar.CanFindInSelection), "Still disabled with a range selected.");
+        Assert.IsTrue(live.Ui(() => live.Viewer.FindBar.CanFindInSelection), "Still disabled with a range selected.");
     }
 
     /// <summary>A Revit dockable pane can be as narrow as 550px; the bar must fit and leave most of the log visible.</summary>
@@ -327,7 +327,7 @@ public sealed class FindBarTests
 
         var dialog = dialogLoop ? form.Handle : IntPtr.Zero;
         var bar = viewer.FindBar;
-        PostMessage(editor.Handle, WmKeyDown, (IntPtr)Keys.F3, IntPtr.Zero);
+        PostKey(editor.Handle, Keys.F3);
         if (PumpUntil(dialog, () => bar.Visible))
             steps.Add("opened");
 
@@ -339,11 +339,11 @@ public sealed class FindBarTests
         if (PumpUntil(dialog, () => input.Text == "abc" && editor.CurrentPosition == firstMatch))
             steps.Add("typed");
 
-        PostMessage(input.Handle, WmKeyDown, (IntPtr)Keys.Enter, IntPtr.Zero);
+        PostKey(input.Handle, Keys.Enter);
         if (PumpUntil(dialog, () => secondMatch > 0 && editor.CurrentPosition == secondMatch))
             steps.Add("navigated");
 
-        PostMessage(input.Handle, WmKeyDown, (IntPtr)Keys.Escape, IntPtr.Zero);
+        PostKey(input.Handle, Keys.Escape);
         if (PumpUntil(dialog, () => !bar.Visible))
             steps.Add("closed");
 
@@ -484,12 +484,33 @@ public sealed class FindBarTests
     /// </summary>
     private static bool SendThroughDispatcher(System.Windows.Forms.Control target, Keys key)
     {
+        WaitForNoModifierKeys();
         var msg = new MSG { hwnd = target.Handle, message = WmKeyDown, wParam = (IntPtr)key };
         return ComponentDispatcher.RaiseThreadMessage(ref msg);
     }
 
+    private static void PostKey(IntPtr target, Keys key)
+    {
+        WaitForNoModifierKeys();
+        PostMessage(target, WmKeyDown, (IntPtr)key, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// WinForms adds the real keyboard's Ctrl, Shift and Alt to every key, so a key someone holds down on this
+    /// machine would turn F3 into Shift+F3. Waits for them to be released.
+    /// </summary>
+    private static void WaitForNoModifierKeys()
+    {
+        var until = Environment.TickCount + 5000;
+        while (System.Windows.Forms.Control.ModifierKeys != Keys.None && unchecked(Environment.TickCount - until) < 0)
+            Thread.Sleep(20);
+        if (System.Windows.Forms.Control.ModifierKeys != Keys.None)
+            Assert.Inconclusive($"{System.Windows.Forms.Control.ModifierKeys} is held down on this machine.");
+    }
+
     private static bool PressKey(System.Windows.Forms.Control target, Keys key)
     {
+        WaitForNoModifierKeys();
         var msg = Message.Create(target.Handle, WmKeyDown, (IntPtr)key, IntPtr.Zero);
         return target.PreProcessMessage(ref msg);
     }

@@ -86,12 +86,6 @@ internal sealed class LogFindBar : Control
     private SearchOptions _options;
     private bool _inSelectionOn;
 
-    /// <summary>
-    /// Find in selection needs a range the user selected. The bar only moves the caret and never selects,
-    /// so any selection is the user's.
-    /// </summary>
-    private bool _canScope;
-
     public LogFindBar(LogScintillaControl editor, SearchCoordinator search, ScintillaDocument document, IScintillaTheme theme)
     {
         _editor = editor;
@@ -135,7 +129,15 @@ internal sealed class LogFindBar : Control
         editor.Controls.Add(this);
     }
 
-    internal bool CanFindInSelection => _canScope || _inSelectionOn;
+    internal bool CanFindInSelection => _inSelectionOn || HasSelection();
+
+    /// <summary>
+    /// Find in selection needs a range the user selected. The bar only moves the caret and never selects,
+    /// so any selection is the user's. Read when needed, because the editor reports selection changes late.
+    /// </summary>
+    private bool HasSelection() =>
+        _editor.DirectMessage(LogConstants.SciGetSelectionEnd, IntPtr.Zero, IntPtr.Zero)
+        != _editor.DirectMessage(LogConstants.SciGetSelectionStart, IntPtr.Zero, IntPtr.Zero);
 
     public void ApplyTheme(IScintillaTheme theme)
     {
@@ -205,7 +207,7 @@ internal sealed class LogFindBar : Control
             _liveCount.Start();
         }
 
-        UpdateCanScope();
+        Invalidate();
         if (seed is not null && seed != _input.Text)
             _input.Text = seed;
         // Not moving: the selection may be the range the user wants to find in.
@@ -286,19 +288,9 @@ internal sealed class LogFindBar : Control
             Invalidate();
     }
 
-    private void UpdateCanScope()
-    {
-        var canScope = _editor.DirectMessage(LogConstants.SciGetSelectionEnd, IntPtr.Zero, IntPtr.Zero)
-                       != _editor.DirectMessage(LogConstants.SciGetSelectionStart, IntPtr.Zero, IntPtr.Zero);
-        if (canScope == _canScope)
-            return;
-        _canScope = canScope;
-        Invalidate();
-    }
-
     private void ToggleInSelection()
     {
-        if (!_inSelectionOn && !_canScope)
+        if (!CanFindInSelection)
             return;
 
         _inSelectionOn = _search.SetScope(!_inSelectionOn);
@@ -369,7 +361,7 @@ internal sealed class LogFindBar : Control
         if (!Visible || (e.Change & UpdateChange.Selection) == 0)
             return;
 
-        UpdateCanScope();
+        Invalidate(); // the find-in-selection button follows the selection
         if (_total <= 0 || _countCts is not null)
             return;
 
@@ -530,7 +522,7 @@ internal sealed class LogFindBar : Control
         Part.MatchCase => ("Match Case", "Alt+C"),
         Part.WholeWord => ("Match Whole Word", "Alt+W"),
         Part.Regex => ("Use Regular Expression", "Alt+R"),
-        Part.InSelection when !_canScope && !_inSelectionOn => ("Select a range first to find in selection", "Alt+L"),
+        Part.InSelection when !CanFindInSelection => ("Select a range first to find in selection", "Alt+L"),
         Part.InSelection => ("Find in Selection", "Alt+L"),
         Part.Previous => ("Previous Match", "Shift+Enter"),
         Part.Next => ("Next Match", "Enter"),
@@ -624,7 +616,7 @@ internal sealed class LogFindBar : Control
         var canMove = _input.TextLength > 0 && _total != 0;
         PaintButton(g, Part.Previous, _previous, _glyphs.Up, _glyphFont, canMove, toggled: false);
         PaintButton(g, Part.Next, _next, _glyphs.Down, _glyphFont, canMove, toggled: false);
-        PaintButton(g, Part.InSelection, _inSelection, _glyphs.Selection, _glyphFont, _canScope || _inSelectionOn, _inSelectionOn);
+        PaintButton(g, Part.InSelection, _inSelection, _glyphs.Selection, _glyphFont, CanFindInSelection, _inSelectionOn);
         PaintButton(g, Part.Close, _close, _glyphs.Close, _smallGlyphFont, enabled: true, toggled: false);
     }
 
