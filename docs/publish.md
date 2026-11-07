@@ -95,7 +95,7 @@ on:
 A tag push publishes that tag. **Run workflow** (`workflow_dispatch`) publishes the version in the `.csproj` of the chosen branch, which re-publishes a release whose tag predates a workflow fix.
 
 Steps executed, with `id-token: write` permission:
-1. `actions/checkout@v4` with `submodules: recursive` — required for LookupEngine submodule
+1. `actions/checkout@v7` with `submodules: recursive` — required for LookupEngine submodule
 2. `dotnet restore` on the main project
 3. `dotnet build -c Release` — compiles the LookupEngine source into `ZLogger.Scintilla.dll`
 4. `dotnet pack -c Release --no-build` — packages the assembly
