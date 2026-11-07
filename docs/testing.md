@@ -66,6 +66,7 @@ Counts include data rows.
 | `DocumentationConsistencyTests` | 2 | All docs scanned for stale type/API references |
 | `EnumerableSerializationTests` | 7 | `IEnumerable<T>` parameters not auto-serialized by ZLogger |
 | `FilterSemanticsTests` | 2 | Out-of-range filter levels are clamped to `Trace`…`None` |
+| `FindBarTests` | 10 | Find bar: find in selection, match options, caret-only navigation, keys in WinForms and WPF, cursor, caret, a 550px pane |
 | `HostLifecycleTests` | 7 | Double-dispose idempotency, `TryPost` after dispose returns `false` |
 | `LiveViewerTests` | 47 | On a real window: rendering, auto-scroll, filter replay, search, clicks, double clicks, drags, scopes, backlog limit, skipped lines, flush timing, deferred formatting, and a colorizer that waits for the UI thread during `Clear()` and `Dispose()` |
 | `LoggingRegistrationTests` | 1 | `ScintillaLogProcessor` uses delegate, decoupled from viewer |
