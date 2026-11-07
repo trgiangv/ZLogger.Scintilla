@@ -1,8 +1,11 @@
-using System;
 using System.Drawing;
 namespace ZLogger.Scintilla.Models;
 
-internal readonly struct TokenPayload
+/// <summary>
+/// What a styled token carries beyond its style. A class rather than a struct: almost no range has one,
+/// and every <see cref="StyleRange"/> would otherwise pay for it in size.
+/// </summary>
+internal sealed class TokenPayload
 {
     private readonly Action? _onClick;
 

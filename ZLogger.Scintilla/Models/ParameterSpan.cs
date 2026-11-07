@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using ZLogger.Scintilla.Pipeline;
 using ZLogger.Scintilla.Public;
 namespace ZLogger.Scintilla.Models;
@@ -40,8 +38,7 @@ public readonly struct ParameterSpan
     /// </summary>
     public static bool HasParameter(RenderContext context, string clrTypeFullName, string formattedValue)
     {
-        if (!context.Properties.TryGetValue(LogConstants.ParameterSpans, out var raw)
-            || raw is not ParameterSpan[] spans)
+        if (context.ParameterSpans is not { } spans)
             return false;
 
         foreach (var span in spans)

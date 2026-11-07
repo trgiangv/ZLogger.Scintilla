@@ -1,4 +1,3 @@
-using System;
 using System.Threading.Channels;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Public;
@@ -29,8 +28,6 @@ public sealed class ScintillaOptions
     public ILogColorizer? Colorizer { get; private set; }
     public ILinkifier? Linkifier { get; private set; }
 
-    /// <summary>Enable clickable link tokens. True when any linkifier is registered.</summary>
-    public bool EnableTokenLinks => Linkifier is not null;
 
     /// <summary>
     /// Registers a sink for exceptions thrown by colorizers and linkifiers during rendering.
@@ -40,7 +37,7 @@ public sealed class ScintillaOptions
     /// <summary>Max recursion depth for JSON object decomposition in pretty-print mode. Default 2.</summary>
     public int JsonDecomposeDepth { get; private set; } = LogConstants.DefaultDecomposeDepth;
 
-    /// <summary>Max items to serialize per collection/iterable in pretty-print JSON. Default 50.</summary>
+    /// <summary>Max items to serialize per collection/iterable in pretty-print JSON. Default 20.</summary>
     public int JsonDecomposeMaxCollection { get; private set; } = LogConstants.DefaultDecomposeCollection;
 
     /// <summary>
@@ -48,6 +45,19 @@ public sealed class ScintillaOptions
     /// by the default reflection-based pipeline (e.g. Python objects).
     /// </summary>
     public ICustomSerializer? CustomSerializer { get; private set; }
+
+    /// <summary>
+    /// When true, <c>ILogger.BeginScope</c> values reach <see cref="ILinkifier"/> through
+    /// <see cref="Models.RenderContext.Properties"/>. Off by default because capturing them costs every log call.
+    /// </summary>
+    public bool IncludeScopes { get; private set; }
+
+    /// <summary>Makes scope values available to linkifiers. See <see cref="IncludeScopes"/>.</summary>
+    public ScintillaOptions WithScopes(bool enabled = true)
+    {
+        IncludeScopes = enabled;
+        return this;
+    }
 
     /// <summary>Configures the ingest channel.</summary>
     public ScintillaOptions Channel(
@@ -71,7 +81,8 @@ public sealed class ScintillaOptions
         bool autoScroll = true)
     {
         MaxLines = maxLines > 0 ? maxLines : LogConstants.DefaultMaxLines;
-        FontFamily = string.IsNullOrWhiteSpace(font) ? LogConstants.DefaultFontFamily : font!;
+        // The null test is spelled out because net48's IsNullOrWhiteSpace carries no nullability annotation.
+        FontFamily = font is null || string.IsNullOrWhiteSpace(font) ? LogConstants.DefaultFontFamily : font;
         FontSize = fontSize > 0 ? fontSize : LogConstants.DefaultFontSize;
         AutoScroll = autoScroll;
         return this;
@@ -94,7 +105,7 @@ public sealed class ScintillaOptions
 
     /// <summary>
     /// Registers a colorizer that overrides token foreground colors.
-    /// If a token is also matched by a linkifier, only the color is overridden.
+    /// A token matched by a linkifier stays a link and is not colorized.
     /// </summary>
     public ScintillaOptions WithColorized(ILogColorizer colorizer)
     {
@@ -135,7 +146,7 @@ public sealed class ScintillaOptions
     /// <summary>
     /// Sets the max number of items to serialize per collection in pretty-print JSON.
     /// Higher values show more data but risk performance with large collections.
-    /// Default is 50.
+    /// Default is 20.
     /// </summary>
     public ScintillaOptions WithCollectionLimit(int maxItems)
     {

@@ -1,70 +1,46 @@
-using System;
-using System.Threading;
 namespace ZLogger.Scintilla.Pipeline;
 
+/// <summary>
+/// Viewer counters. <see cref="DroppedMessages"/> and <see cref="RenderedMessages"/> are lifetime totals.
+/// A filter replay renders its entries again and counts them again.
+/// </summary>
 internal sealed class LogIngestMetrics
 {
     private long _droppedMessages;
-    private long _ingestBacklogEstimate;
+    private long _ingestBacklog;
     private long _renderedMessages;
     private long _historyEntries;
 
     public long DroppedMessages => Interlocked.Read(ref _droppedMessages);
-    public long PendingEntryCount => Interlocked.Read(ref _ingestBacklogEstimate);
+    public long PendingEntryCount => Interlocked.Read(ref _ingestBacklog);
     public long RenderedMessages => Interlocked.Read(ref _renderedMessages);
     public long HistoryEntries => Interlocked.Read(ref _historyEntries);
 
+    /// <summary>Counted before the channel write, so that a concurrent read can never take the count below zero.</summary>
     public void RecordAccepted()
     {
-        Interlocked.Increment(ref _ingestBacklogEstimate);
+        Interlocked.Increment(ref _ingestBacklog);
     }
 
+    /// <summary>An accepted entry was discarded while still waiting in the channel.</summary>
     public void RecordDrop()
     {
         Interlocked.Increment(ref _droppedMessages);
+        Interlocked.Decrement(ref _ingestBacklog);
     }
 
     public void RecordRendered(int count)
     {
-        if (count > 0)
-            Interlocked.Add(ref _renderedMessages, count);
+        Interlocked.Add(ref _renderedMessages, count);
     }
 
-    public void IncrementHistory() => Interlocked.Increment(ref _historyEntries);
-
-    public void IncrementHistory(int count)
+    public void AddHistory(int delta)
     {
-        if (count > 0)
-            Interlocked.Add(ref _historyEntries, count);
+        Interlocked.Add(ref _historyEntries, delta);
     }
-
-    public void DecrementHistory() => Interlocked.Decrement(ref _historyEntries);
 
     public void DecrementBacklog(int count)
     {
-        if (count <= 0)
-            return;
-
-        while (true)
-        {
-            var current = Interlocked.Read(ref _ingestBacklogEstimate);
-            if (current <= 0)
-                return;
-
-            var next = Math.Max(0, current - count);
-            if (Interlocked.CompareExchange(ref _ingestBacklogEstimate, next, current) == current)
-                return;
-        }
-    }
-
-    /// <summary>
-    /// Resets transient counters (history size, backlog estimate) after a document clear.
-    /// <see cref="DroppedMessages"/> and <see cref="RenderedMessages"/> are lifetime counters
-    /// and are intentionally preserved — they reflect cumulative throughput since the host started.
-    /// </summary>
-    public void ResetOnClear()
-    {
-        Interlocked.Exchange(ref _historyEntries, 0);
-        Interlocked.Exchange(ref _ingestBacklogEstimate, 0);
+        Interlocked.Add(ref _ingestBacklog, -count);
     }
 }

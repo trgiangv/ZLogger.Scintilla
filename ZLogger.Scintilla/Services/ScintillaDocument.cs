@@ -1,8 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using ScintillaNET;
 using ZLogger.Scintilla.Models;
@@ -11,34 +7,46 @@ using ZLogger.Scintilla.Rendering;
 // ReSharper disable RedundantCast
 namespace ZLogger.Scintilla.Services;
 
+/// <summary>
+/// The document and its view. Positions here are always bytes, matching Scintilla's messages. All methods
+/// except <see cref="CountMatchesAsync"/> must be called on the UI thread.
+/// </summary>
 internal sealed class ScintillaDocument : IDisposable
 {
-    private readonly ScintillaNET.Scintilla _scintilla;
+    private readonly LogScintillaControl _scintilla;
     private readonly ScintillaSearchService _searchService;
     private readonly ScintillaInteractionService _interactionService;
     private readonly ScintillaStyleService _styleService;
     private readonly List<TokenRange> _tokenRanges = new(LogConstants.TokenRangesCapacity);
     private readonly Dictionary<int, int> _linkStyleByBaseStyleId = new();
+    private readonly bool _autoScroll;
     private long _lastSearchRefreshTick;
+    private bool _batchUpdateActive;
+    private bool _lineNumbersEnabled;
+
+    /// <summary>True until the user scrolls away from the end, and again once they scroll back to it.</summary>
+    private bool _followTail = true;
 
     public ScintillaDocument(
-        ScintillaNET.Scintilla scintilla,
+        LogScintillaControl scintilla,
         ScintillaOptions options,
         IScintillaTheme initialTheme)
     {
         _scintilla = scintilla;
+        _autoScroll = options.AutoScroll;
         _searchService = new ScintillaSearchService(_scintilla);
         _interactionService = new ScintillaInteractionService(_scintilla, options, _tokenRanges);
-        _styleService = new ScintillaStyleService(_scintilla, options, _tokenRanges, _linkStyleByBaseStyleId);
+        _styleService = new ScintillaStyleService(_scintilla, _tokenRanges, _linkStyleByBaseStyleId);
         ConfigureControl();
         _searchService.ApplyTheme(initialTheme);
-        _scintilla.DoubleClick += OnDoubleClick;
         _scintilla.MouseUp += OnMouseUp;
         _scintilla.MouseMove += OnMouseMove;
         _scintilla.MouseLeave += OnMouseLeave;
         _scintilla.MouseWheel += OnMouseWheel;
         _scintilla.UpdateUI += OnUpdateUi;
         _scintilla.SizeChanged += OnSizeChanged;
+        _scintilla.Painted += OnPainted;
+        _scintilla.UserScrolled += OnUserScrolled;
     }
 
     public void ApplyThemeStyles(LogRenderer renderStrategy, IScintillaTheme theme)
@@ -51,60 +59,40 @@ internal sealed class ScintillaDocument : IDisposable
         RefreshSearchHighlightIfActive();
     }
 
-    private bool _batchUpdateActive;
-    private WrapMode _savedWrapMode;
-
-    /// <summary>
-    /// Freezes Scintilla for a batch update cycle: disables word-wrap and sets mutable mode.
-    /// Must be paired with <see cref="EndBatchUpdate"/>.
-    /// </summary>
+    /// <summary>Makes the document writable for a batch update. Must be paired with <see cref="EndBatchUpdate"/>.</summary>
     public void BeginBatchUpdate()
     {
         _batchUpdateActive = true;
-        _savedWrapMode = _scintilla.WrapMode;
-        if (_savedWrapMode != WrapMode.None)
-            _scintilla.WrapMode = WrapMode.None;
-        if (_scintilla.ReadOnly)
-            _scintilla.ReadOnly = false;
+        Send(LogConstants.SciSetReadOnly);
     }
 
-    /// <summary>
-    /// Thaws Scintilla after a batch update cycle: restores word-wrap, scrolls once, re-enables read-only.
-    /// </summary>
-    public void EndBatchUpdate(bool autoScroll)
+    /// <summary>Ends a batch update: makes the document read-only again and shows the new text.</summary>
+    public void EndBatchUpdate(bool documentChanged)
     {
         if (!_batchUpdateActive)
             return;
         _batchUpdateActive = false;
 
-        if (_savedWrapMode != WrapMode.None)
-            _scintilla.WrapMode = _savedWrapMode;
-
-        if (autoScroll)
+        if (documentChanged)
         {
-            var docEnd = (int)_scintilla.DirectMessage(LogConstants.SciGetLength, IntPtr.Zero, IntPtr.Zero);
-            _scintilla.DirectMessage(LogConstants.SciGotoPos, (IntPtr)docEnd, IntPtr.Zero);
-            _scintilla.ScrollCaret();
+            ScrollToTailIfFollowing();
+            if (_lineNumbersEnabled)
+                _scintilla.Margins[0].Width = CalculateLineNumberWidth();
         }
 
-        if (_scintilla.Margins[0].Width > 0)
-            _scintilla.Margins[0].Width = CalculateLineNumberWidth();
-
-        _scintilla.ReadOnly = true;
-        _searchService.InvalidateMatchIndex();
+        Send(LogConstants.SciSetReadOnly, 1);
     }
 
     /// <summary>
-    /// Applies a pre-prepared batch to the Scintilla control. Only performs UI-thread work:
-    /// text append, style resolution, and token registration.
+    /// Appends a prepared batch. Only performs UI-thread work: text append, styling, and token registration.
     /// Must be called between <see cref="BeginBatchUpdate"/> and <see cref="EndBatchUpdate"/>.
     /// </summary>
-    public void ApplyPreparedBatch(PreparedBatch batch)
+    public void ApplyPreparedBatch(in PreparedBatch batch)
     {
         if (batch.Text.Count <= 0)
             return;
 
-        var appendStart = (int)_scintilla.DirectMessage(LogConstants.SciGetLength, IntPtr.Zero, IntPtr.Zero);
+        var appendStart = (int)Send(LogConstants.SciGetLength);
         AppendBytesToScintilla(batch.Text.Array, batch.Text.Count);
         _styleService.ApplyPreparedStyles(appendStart, batch.Text.Count,
             batch.Styles.Array, batch.Styles.Count,
@@ -112,48 +100,32 @@ internal sealed class ScintillaDocument : IDisposable
         _interactionService.TrimTokenRangesIfNeeded(LogConstants.DefaultMaxTokenRanges);
     }
 
-    /// <summary>
-    /// Refreshes search highlights after one or more batches have been applied.
-    /// Called once per drain cycle to avoid redundant work.
-    /// </summary>
-    public void InvalidateAndRefreshSearch()
-    {
-        RefreshSearchHighlightIfActive();
-    }
+    /// <summary>Refreshes search highlights. Called once per drain, not per batch.</summary>
+    public void RefreshSearch() => RefreshSearchHighlightIfActive();
 
     public void TrimHeadLines(int linesToRemove)
     {
-        if (linesToRemove <= 0 || _scintilla.Lines.Count == 0)
+        var lineCount = GetLineCount();
+        var lastLineToRemove = Math.Min(linesToRemove, lineCount - 1);
+        if (lastLineToRemove <= 0)
             return;
 
-        _searchService.InvalidateMatchIndex();
+        var deletedBytes = (int)Send(LogConstants.SciPositionFromLine, lastLineToRemove);
+        if (deletedBytes <= 0)
+            return;
 
-        var wasReadOnly = BeginMutableSection();
-        int deletedBytes;
-        try
-        {
-            var lastLineToRemove = Math.Min(linesToRemove, _scintilla.Lines.Count - 1);
-            if (lastLineToRemove <= 0)
-                return;
-
-            deletedBytes = _scintilla.Lines[lastLineToRemove].Position;
-            if (deletedBytes > 0)
-                _scintilla.DeleteRange(0, deletedBytes);
-        }
-        finally
-        {
-            EndMutableSection(wasReadOnly);
-        }
+        if (!_batchUpdateActive)
+            Send(LogConstants.SciSetReadOnly);
+        Send(LogConstants.SciDeleteRange, 0, deletedBytes);
+        if (!_batchUpdateActive)
+            Send(LogConstants.SciSetReadOnly, 1);
 
         AdjustTokenRangesAfterTrim(deletedBytes);
-        RefreshSearchHighlightIfActive();
+        _searchService.OnHeadTrimmed(deletedBytes);
     }
 
     private void AdjustTokenRangesAfterTrim(int deletedBytes)
     {
-        if (deletedBytes <= 0)
-            return;
-
         if (_tokenRanges.Count == 0)
             return;
 
@@ -161,10 +133,6 @@ internal sealed class ScintillaDocument : IDisposable
         for (var i = 0; i < _tokenRanges.Count; i++)
         {
             var range = _tokenRanges[i];
-            var rangeEnd = range.Start + range.Length;
-            if (rangeEnd <= deletedBytes)
-                continue;
-
             if (range.Start < deletedBytes)
                 continue;
 
@@ -175,83 +143,117 @@ internal sealed class ScintillaDocument : IDisposable
             _tokenRanges.RemoveRange(writeIndex, _tokenRanges.Count - writeIndex);
     }
 
-    public int GetLineCount() => _scintilla.Lines.Count;
+    public int GetLineCount() => (int)Send(LogConstants.SciGetLineCount);
 
+    /// <summary>
+    /// Replaces the document so that its memory is released. Assigning <see cref="Document.Empty"/> makes
+    /// Scintilla release the old document and create a new one, which keeps the reference counts balanced.
+    /// </summary>
     public void Clear()
     {
-        _searchService.InvalidateMatchIndex();
-
-        var oldDoc = _scintilla.Document;
-        var newDoc = _scintilla.CreateDocument();
-        _scintilla.Document = newDoc;
-        _scintilla.ReleaseDocument(oldDoc);
-
-        _scintilla.DirectMessage(LogConstants.SciSetUndoCollection, IntPtr.Zero, IntPtr.Zero);
+        _scintilla.Document = Document.Empty;
+        Send(LogConstants.SciSetUndoCollection);
         _scintilla.EmptyUndoBuffer();
-        _scintilla.WrapMode = WrapMode.Word;
-        _scintilla.ReadOnly = true;
+        Send(LogConstants.SciSetReadOnly, _batchUpdateActive ? 0 : 1);
+        ForgetDocumentContent();
+    }
 
+    /// <summary>Empties the document ahead of a replay. Keeps its allocation, because similar text is about to return.</summary>
+    public void ResetForReplay()
+    {
+        var wasActive = _batchUpdateActive;
+        if (!wasActive)
+            Send(LogConstants.SciSetReadOnly);
+        Send(LogConstants.SciClearAll);
+        if (!wasActive)
+            Send(LogConstants.SciSetReadOnly, 1);
+        ForgetDocumentContent();
+    }
+
+    private void ForgetDocumentContent()
+    {
         _tokenRanges.Clear();
-        _tokenRanges.TrimExcess();
-
+        _followTail = true;
+        _searchService.OnDocumentReset();
         RefreshSearchHighlightIfActive();
     }
 
     public SearchMatch FindNext(string pattern, bool matchCase, bool useRegex)
-        => _searchService.FindNext(pattern, matchCase, useRegex);
+    {
+        var match = _searchService.FindNext(pattern, matchCase, useRegex);
+        UpdateFollowTailAfterMove(match);
+        return match;
+    }
 
     public SearchMatch FindPrevious(string pattern, bool matchCase, bool useRegex)
-        => _searchService.FindPrevious(pattern, matchCase, useRegex);
+    {
+        var match = _searchService.FindPrevious(pattern, matchCase, useRegex);
+        UpdateFollowTailAfterMove(match);
+        return match;
+    }
 
-    public SearchMatch HighlightSearch(string pattern, bool matchCase, bool useRegex)
+    /// <summary>Stays on the match while logs arrive. Scrolling back to the end resumes following.</summary>
+    private void UpdateFollowTailAfterMove(SearchMatch match)
+    {
+        if (match.Found)
+            _followTail = IsAtEnd();
+    }
+
+    public void HighlightSearch(string pattern, bool matchCase, bool useRegex)
         => _searchService.HighlightSearch(pattern, matchCase, useRegex);
 
+    public Task<SearchMatch> FindNextAsync(string pattern, bool matchCase, bool useRegex, CancellationToken cancellationToken) =>
+        RunOnUiAsync(() => _scintilla.IsDisposed ? SearchMatch.NotFound : FindNext(pattern, matchCase, useRegex), cancellationToken);
+
+    public Task<SearchMatch> FindPreviousAsync(string pattern, bool matchCase, bool useRegex, CancellationToken cancellationToken) =>
+        RunOnUiAsync(() => _scintilla.IsDisposed ? SearchMatch.NotFound : FindPrevious(pattern, matchCase, useRegex), cancellationToken);
+
+    /// <summary>
+    /// Counts on the UI thread with Scintilla's own search, the same engine navigation uses, in slices short
+    /// enough not to stall the UI. A snapshot searched on another thread would need a second regex engine,
+    /// and two engines do not agree on what a pattern matches.
+    /// </summary>
     public async Task<int> CountMatchesAsync(
         string pattern,
         bool matchCase,
         bool useRegex,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(pattern))
+        if (string.IsNullOrWhiteSpace(pattern) || _scintilla.IsDisposed || !_scintilla.IsHandleCreated)
             return 0;
 
-        if (_scintilla.IsDisposed)
-            return 0;
-
-        var snapshot = await CaptureTextSnapshotAsync(cancellationToken).ConfigureAwait(false);
-
-        if (string.IsNullOrEmpty(snapshot))
-            return 0;
-
-        var count = await Task.Run(() => CountMatches(snapshot, pattern, matchCase, useRegex, cancellationToken), cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!cancellationToken.IsCancellationRequested && !_scintilla.IsDisposed)
+        while (true)
         {
-            if (_scintilla.InvokeRequired)
-                _scintilla.BeginInvoke(_searchService.BuildMatchIndex);
-            else
-                _searchService.BuildMatchIndex();
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var (finished, count) = await RunOnUiAsync(() =>
+            {
+                _searchService.EnsureActive(pattern, matchCase, useRegex);
+                var done = _searchService.CountSlice(LogConstants.CountSliceBudgetMs, out var total);
+                return (done, total);
+            }, cancellationToken).ConfigureAwait(false);
 
-        return count;
+            if (finished)
+                return count;
+        }
     }
 
     public void Dispose()
     {
         _styleService.ReleaseBuffer();
-        _scintilla.DoubleClick -= OnDoubleClick;
         _scintilla.MouseUp -= OnMouseUp;
         _scintilla.MouseMove -= OnMouseMove;
         _scintilla.MouseLeave -= OnMouseLeave;
         _scintilla.MouseWheel -= OnMouseWheel;
         _scintilla.UpdateUI -= OnUpdateUi;
         _scintilla.SizeChanged -= OnSizeChanged;
+        _scintilla.Painted -= OnPainted;
+        _scintilla.UserScrolled -= OnUserScrolled;
         _scintilla.Dispose();
     }
 
     public void SetLineNumbers(bool enabled)
     {
+        _lineNumbersEnabled = enabled;
         if (enabled)
         {
             _scintilla.Margins[0].Type = MarginType.Number;
@@ -265,7 +267,7 @@ internal sealed class ScintillaDocument : IDisposable
 
     private int CalculateLineNumberWidth()
     {
-        var lineCount = Math.Max(_scintilla.Lines.Count, 1);
+        var lineCount = Math.Max(GetLineCount(), 1);
         var digits = (int)Math.Floor(Math.Log10(lineCount) + 1);
         digits = Math.Max(digits, 4);
         return _scintilla.TextWidth(Style.LineNumber, new string('9', digits + 1));
@@ -275,39 +277,33 @@ internal sealed class ScintillaDocument : IDisposable
     {
         _scintilla.WrapMode = WrapMode.Word;
         _scintilla.ReadOnly = true;
-        _scintilla.DirectMessage(LogConstants.SciSetUndoCollection, IntPtr.Zero, IntPtr.Zero);
+        Send(LogConstants.SciSetUndoCollection);
         _scintilla.EmptyUndoBuffer();
         _scintilla.IndentationGuides = IndentView.None;
+        Send(LogConstants.SciSetLayoutCache, LogConstants.ScCachePage);
         _scintilla.Margins[0].Width = 0;
         _scintilla.Margins[1].Width = 0;
         _scintilla.Margins[2].Width = 0;
 
-        var indicator = _scintilla.Indicators[StyleMapper.TokenIndicatorStyleId];
-        indicator.Style = IndicatorStyle.RoundBox;
-        indicator.ForeColor = StyleMapper.TokenIndicatorColor;
-        indicator.Under = StyleMapper.TokenIndicatorUnderText;
-
-        var hotspotStyle = _scintilla.Styles[StyleMapper.LinkHotspotStyleId];
-        hotspotStyle.Hotspot = true;
-        hotspotStyle.Underline = true;
     }
 
-    private bool BeginMutableSection()
+    private void ScrollToTailIfFollowing()
     {
-        var wasReadOnly = _scintilla.ReadOnly;
-        if (wasReadOnly)
-            _scintilla.ReadOnly = false;
-        return wasReadOnly;
+        // Moving the view while the mouse drags a selection would select text the user never pointed at.
+        if (_autoScroll && _followTail && !_scintilla.Capture)
+            Send(LogConstants.SciScrollToEnd);
     }
 
-    private void EndMutableSection(bool wasReadOnly)
+    /// <summary>
+    /// True when the last row is in view. Rows, not lines: with word wrap, one line takes several rows,
+    /// and Scintilla only learns how many when it lays the line out.
+    /// </summary>
+    private bool IsAtEnd()
     {
-        if (wasReadOnly)
-            _scintilla.ReadOnly = true;
+        var lastLine = GetLineCount() - 1;
+        var rows = Send(LogConstants.SciVisibleFromDocLine, lastLine) + 1;
+        return Send(LogConstants.SciGetFirstVisibleLine) + Send(LogConstants.SciLinesOnScreen) >= rows;
     }
-
-
-    private void OnDoubleClick(object? sender, EventArgs e) => _interactionService.HandleDoubleClick();
 
     private void OnMouseUp(object? sender, MouseEventArgs e) => _interactionService.HandleMouseUp(e);
 
@@ -338,6 +334,18 @@ internal sealed class ScintillaDocument : IDisposable
         RefreshSearchHighlightIfActive(force: true);
     }
 
+    private void OnUserScrolled(object? sender, EventArgs e) => _followTail = IsAtEnd();
+
+    /// <summary>
+    /// Scintilla measures wrapped lines when it paints them, and only then does the document grow. Scrolling
+    /// to the end before that stops short, so each paint gets the chance to correct it.
+    /// </summary>
+    private void OnPainted(object? sender, EventArgs e)
+    {
+        if (_autoScroll && _followTail && !_batchUpdateActive && !IsAtEnd())
+            ScrollToTailIfFollowing();
+    }
+
     private void RefreshSearchHighlightIfActive(bool force = false)
     {
         if (!_searchService.HasActiveSearch)
@@ -351,24 +359,23 @@ internal sealed class ScintillaDocument : IDisposable
         _searchService.RefreshHighlightIfActive();
     }
 
-    private Task<string> CaptureTextSnapshotAsync(CancellationToken cancellationToken)
+    private Task<T> RunOnUiAsync<T>(Func<T> action, CancellationToken cancellationToken)
     {
-        if (!_scintilla.InvokeRequired)
-            return Task.FromResult(_scintilla.Text);
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<T>(cancellationToken);
 
-        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var registration = cancellationToken.CanBeCanceled
             ? cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken))
             : default;
-        
-        var holder = registration; // To avoid closure capture of the struct in the lambda
+
         try
         {
             _scintilla.BeginInvoke(() =>
             {
                 try
                 {
-                    tcs.TrySetResult(_scintilla.IsDisposed ? string.Empty : _scintilla.Text);
+                    tcs.TrySetResult(action());
                 }
                 catch (Exception ex)
                 {
@@ -376,7 +383,9 @@ internal sealed class ScintillaDocument : IDisposable
                 }
                 finally
                 {
-                    holder.Dispose();
+                    // Disposed here or in the catch below, never both: the catch runs only if nothing was posted.
+                    // ReSharper disable once AccessToDisposedClosure
+                    registration.Dispose();
                 }
             });
         }
@@ -391,53 +400,12 @@ internal sealed class ScintillaDocument : IDisposable
 
     private unsafe void AppendBytesToScintilla(byte[] buffer, int count)
     {
-        if (count <= 0)
-            return;
-
         fixed (byte* ptr = buffer)
         {
             _scintilla.DirectMessage(LogConstants.SciAppendText, (IntPtr)count, (IntPtr)ptr);
         }
     }
 
-    private static int CountMatches(string text, string pattern, bool matchCase, bool useRegex, CancellationToken cancellationToken)
-        => useRegex
-            ? CountRegexMatches(text, pattern, matchCase, cancellationToken)
-            : CountPlainMatches(text, pattern, matchCase, cancellationToken);
-
-    private static int CountRegexMatches(string text, string pattern, bool matchCase, CancellationToken cancellationToken)
-    {
-        var options = System.Text.RegularExpressions.RegexOptions.CultureInvariant;
-        if (!matchCase)
-            options |= System.Text.RegularExpressions.RegexOptions.IgnoreCase;
-
-        var count = 0;
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(text, pattern, options))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (match.Success && match.Length > 0)
-                count++;
-        }
-
-        return count;
-    }
-
-    private static int CountPlainMatches(string text, string pattern, bool matchCase, CancellationToken cancellationToken)
-    {
-        var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        var count = 0;
-        var index = 0;
-        while (index < text.Length)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var found = text.IndexOf(pattern, index, comparison);
-            if (found < 0)
-                break;
-
-            count++;
-            index = found + Math.Max(pattern.Length, 1);
-        }
-
-        return count;
-    }
+    private long Send(int message, long wParam = 0, long lParam = 0) =>
+        (long)_scintilla.DirectMessage(message, (IntPtr)wParam, (IntPtr)lParam);
 }

@@ -1,39 +1,61 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
 using Microsoft.Extensions.Logging;
 namespace ZLogger.Scintilla.Models;
 
-public sealed class LogEntry
+/// <summary>A formatted log message. Nothing in the public API accepts or returns one, so it stays internal.</summary>
+internal sealed class LogEntry
 {
     public static readonly IReadOnlyDictionary<string, object?> EmptyProperties = new Dictionary<string, object?>();
 
-    private Action<byte[]>? _bufferReleaser;
-    private int _bufferReleased;
+    private IReadOnlyDictionary<string, object?>? _properties;
 
     public LogLevel Level { get; init; } = LogLevel.Information;
     public ArraySegment<byte> Message { get; init; }
-    public IReadOnlyDictionary<string, object?> Properties { get; init; } = EmptyProperties;
 
-    public void AttachBufferLease(Action<byte[]> releaser)
+    /// <summary>
+    /// Scope properties and typed parameter metadata. Built on first use, because most entries never
+    /// meet a linkifier, and a dictionary per log call is the largest cost this property could add.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?> Properties
     {
-        _bufferReleaser = releaser ?? throw new ArgumentNullException(nameof(releaser));
-        _bufferReleased = 0;
+        get => _properties ??= BuildProperties();
+        init => _properties = value;
     }
 
-    public void ReleaseBuffer()
+    internal ParameterSpan[]? ParameterSpans { get; init; }
+    internal byte[]? JsonBytes { get; init; }
+
+    internal ParameterSpan[]? GetParameterSpans()
     {
-        var releaser = _bufferReleaser;
-        if (releaser is null)
-            return;
+        if (ParameterSpans is not null)
+            return ParameterSpans;
 
-        if (Interlocked.Exchange(ref _bufferReleased, 1) != 0)
-            return;
+        return _properties is not null
+               && _properties.TryGetValue(LogConstants.ParameterSpans, out var raw)
+            ? raw as ParameterSpan[]
+            : null;
+    }
 
-        var buffer = Message.Array;
-        if (buffer is null)
-            return;
+    internal byte[]? GetJsonBytes()
+    {
+        if (JsonBytes is not null)
+            return JsonBytes;
 
-        releaser(buffer);
+        return _properties is not null
+               && _properties.TryGetValue(LogConstants.JsonBytes, out var raw)
+            ? raw as byte[]
+            : null;
+    }
+
+    private IReadOnlyDictionary<string, object?> BuildProperties()
+    {
+        if (ParameterSpans is null && JsonBytes is null)
+            return EmptyProperties;
+
+        var properties = new Dictionary<string, object?>(2, StringComparer.Ordinal);
+        if (ParameterSpans is not null)
+            properties[LogConstants.ParameterSpans] = ParameterSpans;
+        if (JsonBytes is not null)
+            properties[LogConstants.JsonBytes] = JsonBytes;
+        return properties;
     }
 }

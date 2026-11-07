@@ -1,8 +1,4 @@
-﻿using System;
-using System.Buffers;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json;
+﻿using System.Text.Json;
 using LookupEngine;
 using LookupEngine.Abstractions;
 using LookupEngine.Abstractions.Enums;
@@ -55,7 +51,7 @@ internal static class LogProcessorUtils
             }
             catch
             {
-                // ignored
+                // A value that cannot be decomposed is written as a plain value below.
             }
 
             writer.WriteJsonValue(raw);
@@ -106,7 +102,7 @@ internal static class LogProcessorUtils
                 }
                 catch
                 {
-                    // ignored
+                    // Falls back to the value's text below.
                 }
             }
 
@@ -114,19 +110,6 @@ internal static class LogProcessorUtils
         }
     }
 
-    internal static byte[] RentArray(int minimumLength)
-    {
-        return minimumLength <= 0 ? [] : ArrayPool<byte>.Shared.Rent(minimumLength);
-    }
-
-    internal static void ReleaseArray(byte[] buffer)
-    {
-        if (buffer.Length == 0)
-            return;
-
-        ArrayPool<byte>.Shared.Return(buffer, clearArray: false);
-    }
-    
     internal static IReadOnlyDictionary<string, object?> BuildProperties(
         this IZLoggerEntry entry,
         ParameterSpan[]? paramSpans,

@@ -1,8 +1,5 @@
-using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Text;
-using System.Threading;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
@@ -14,10 +11,13 @@ internal sealed class LogRenderer
     private readonly string _fontFamily;
     private readonly int _fontSize;
     private bool _enablePrettyJson;
-    private readonly bool _enableTokenProcessing;
+
+    private const int MaxStyledValueChars = 64;
 
     private readonly JsonSyntaxHighlighter _jsonHighlighter = new();
-    private readonly DisplayValueFormatter _displayFormatter;
+    private readonly TokenResolutionEngine _tokenResolution;
+    private readonly List<(int Start, int Length)> _urls = new(LogConstants.UrlMatchBufferCapacity);
+    private readonly List<StyledHit> _hits = new(4);
 
     internal LogRenderer()
         : this(LogConstants.DefaultFontFamily, LogConstants.DefaultFontSize)
@@ -30,16 +30,10 @@ internal sealed class LogRenderer
         _fontSize = fontSize <= 0 ? LogConstants.DefaultFontSize : fontSize;
 
         var resolvedOptions = options ?? new ScintillaOptions();
-        _enablePrettyJson = false;
-        _enableTokenProcessing = resolvedOptions.Colorizer is not null ||
-                                 resolvedOptions.Linkifier is not null;
-
-        var tokenResolution = new TokenResolutionEngine(
+        _tokenResolution = new TokenResolutionEngine(
             resolvedOptions.Colorizer,
             resolvedOptions.Linkifier,
             resolvedOptions.EnrichmentErrorSink);
-
-        _displayFormatter = new DisplayValueFormatter(tokenResolution);
     }
 
     internal void SetPrettyJson(bool enabled)
@@ -106,7 +100,7 @@ internal sealed class LogRenderer
         SetStyle(scintilla, SemanticStyle.JsonNull.ToStyleId(), theme.JsonNull, theme.Background, bold: true);
         SetStyle(scintilla, SemanticStyle.JsonDateTime.ToStyleId(), theme.JsonDateTime, theme.Background);
         SetStyle(scintilla, SemanticStyle.TokenLink.ToStyleId(), theme.LinkForeground, theme.Background, bold: true);
-        SetStyle(scintilla, StyleMapper.LinkHotspotStyleId, theme.LinkForeground, theme.Background, bold: true);
+
         SetStyle(scintilla, SemanticStyle.TokenClassified.ToStyleId(), theme.LinkForeground, theme.Background, bold: true);
     }
 
@@ -118,8 +112,8 @@ internal sealed class LogRenderer
     }
 
     /// <summary>
-    /// Builds render segments for the text prefix + message portion of a log entry.
-    /// JSON lines (when pretty-JSON is enabled) are styled separately via <see cref="BuildJsonSegments"/>.
+    /// Builds render segments for one message. Works on the UTF-8 text throughout: colorizers and linkifiers
+    /// take UTF-8 too, so decoding to a string would only have to be undone for every token.
     /// </summary>
     public void BuildSegments(LogEntry entry, IList<RenderSegment> segments)
     {
@@ -127,72 +121,140 @@ internal sealed class LogRenderer
         if (entry.Message.Array is null || entry.Message.Count <= 0)
             return;
 
-        var utf8Slice = new ReadOnlyMemory<byte>(entry.Message.Array, entry.Message.Offset, entry.Message.Count);
-        var hasAdvancedStyling = _enableTokenProcessing ||
-                                 entry.Properties.ContainsKey(LogConstants.ParameterSpans);
-
-        if (!hasAdvancedStyling)
+        var line = new ReadOnlyMemory<byte>(entry.Message.Array, entry.Message.Offset, entry.Message.Count);
+        var prefix = LogPrefixParser.TryParse(line.Span);
+        var bodyStart = 0;
+        if (prefix.Found)
         {
-            BuildPlainSegments(entry, utf8Slice, segments);
-            return;
+            bodyStart = prefix.PrefixByteLength;
+            LogPrefixParser.BuildPrefixSegments(prefix, line.Span.Slice(0, bodyStart), entry.Level, segments);
         }
 
-        BuildStyledSegments(entry, utf8Slice, segments);
+        var body = line.Span.Slice(bodyStart);
+        _hits.Clear();
+        CollectUrlHits(body);
+        CollectParameterHits(body, entry);
+        SortHitsByStart();
+        AppendBody(new RenderContext(line.Slice(bodyStart), entry), body, segments);
     }
 
-    /// <summary>
-    /// Builds render segments for a pre-formatted JSON string (syntax highlighting only).
-    /// </summary>
-    public void BuildJsonSegments(string jsonText, IList<RenderSegment> segments)
+    /// <summary>Builds render segments for pre-formatted UTF-8 JSON (syntax highlighting only).</summary>
+    public void BuildJsonSegments(ReadOnlySpan<byte> json, IList<RenderSegment> segments)
     {
         segments.Clear();
-        if (string.IsNullOrEmpty(jsonText))
+        _jsonHighlighter.AppendJsonStyledSegments(json, segments);
+    }
+
+    /// <summary>URLs go first, so that a number inside a URL does not split the link.</summary>
+    private void CollectUrlHits(ReadOnlySpan<byte> body)
+    {
+        UrlScanner.FindAll(body, _urls);
+        foreach (var (start, length) in _urls)
+        {
+            if (UrlScanner.TryCreateLink(body.Slice(start, length), out var link))
+                _hits.Add(new StyledHit(start, new RenderSegment(length, SemanticStyle.TokenLink, link, isLink: true)));
+        }
+    }
+
+    private void CollectParameterHits(ReadOnlySpan<byte> body, LogEntry entry)
+    {
+        if (entry.GetParameterSpans() is not { } spans)
             return;
 
-        _jsonHighlighter.AppendJsonStyledSegments(jsonText, segments);
+        foreach (var span in spans)
+            FindParameterHits(body, span);
     }
 
-    private static void BuildPlainSegments(LogEntry entry, ReadOnlyMemory<byte> utf8Slice, IList<RenderSegment> segments)
+    private void FindParameterHits(ReadOnlySpan<byte> body, in ParameterSpan span)
     {
-        var prefixResult = LogPrefixParser.TryParse(utf8Slice.Span);
-        if (prefixResult.Found)
-            LogPrefixParser.BuildPrefixSegments(prefixResult, utf8Slice.Span, entry.Level, segments);
-        else
-            segments.Add(new RenderSegment(entry.Message.Count, SemanticStyle.Text));
-    }
+        var value = span.FormattedValue;
+        if (span.SemanticStyle == SemanticStyle.Text || string.IsNullOrEmpty(value) || value.Length > MaxStyledValueChars)
+            return;
 
-    private void BuildStyledSegments(LogEntry entry, ReadOnlyMemory<byte> utf8Slice, IList<RenderSegment> segments)
-    {
-        var (renderedUtf8, renderedMessage, prefixResult) = ParseMessageWithPrefix(entry, utf8Slice);
+        Span<byte> buffer = stackalloc byte[MaxStyledValueChars * 3];
+        var needle = buffer.Slice(0, Encoding.UTF8.GetBytes(value.AsSpan(), buffer));
 
-        if (prefixResult.Found)
-            LogPrefixParser.BuildPrefixSegments(
-                prefixResult,
-                utf8Slice.Span.Slice(0, prefixResult.PrefixByteLength),
-                entry.Level,
-                segments);
-
-        var renderContext = new RenderContext(renderedUtf8, entry.Properties);
-        _displayFormatter.AppendSegments(renderContext, renderedMessage, segments);
-    }
-
-    private static (ReadOnlyMemory<byte> RenderedUtf8, string RenderedMessage, ParsedPrefix PrefixResult) ParseMessageWithPrefix(LogEntry entry, ReadOnlyMemory<byte> utf8Slice)
-    {
-        var prefixResult = LogPrefixParser.TryParse(utf8Slice.Span);
-
-        if (prefixResult.Found)
+        var position = 0;
+        while (position <= body.Length - needle.Length)
         {
-            var renderedUtf8 = utf8Slice.Slice(prefixResult.PrefixByteLength);
-            var renderedMessage = renderedUtf8.Length > 0
-                ? Encoding.UTF8.GetString(
-                    entry.Message.Array!,
-                    entry.Message.Offset + prefixResult.PrefixByteLength,
-                    entry.Message.Count - prefixResult.PrefixByteLength)
-                : string.Empty;
-            return (renderedUtf8, renderedMessage, prefixResult);
+            var found = body.Slice(position).IndexOf(needle);
+            if (found < 0)
+                return;
+
+            var start = position + found;
+            position = start + needle.Length;
+            if (IsWholeToken(body, start, position))
+                _hits.Add(new StyledHit(start, new RenderSegment(needle.Length, span.SemanticStyle)));
+        }
+    }
+
+    private static bool IsWholeToken(ReadOnlySpan<byte> body, int start, int end) =>
+        (start == 0 || RenderingChars.IsTokenSeparator(body[start - 1]))
+        && (end == body.Length || RenderingChars.IsTokenSeparator(body[end]));
+
+    /// <summary>A stable sort, so that a URL stays ahead of a parameter at the same place. There are rarely more than a few.</summary>
+    private void SortHitsByStart()
+    {
+        for (var i = 1; i < _hits.Count; i++)
+        {
+            var hit = _hits[i];
+            var j = i - 1;
+            while (j >= 0 && _hits[j].Start > hit.Start)
+            {
+                _hits[j + 1] = _hits[j];
+                j--;
+            }
+            _hits[j + 1] = hit;
+        }
+    }
+
+    private void AppendBody(in RenderContext context, ReadOnlySpan<byte> body, IList<RenderSegment> segments)
+    {
+        var cursor = 0;
+        foreach (var hit in _hits)
+        {
+            if (hit.Start < cursor)
+                continue;
+
+            AppendTokens(context, body.Slice(cursor, hit.Start - cursor), segments);
+            segments.Add(hit.Segment);
+            cursor = hit.Start + hit.Segment.Utf8Length;
         }
 
-        var fullMessage = Encoding.UTF8.GetString(entry.Message.Array!, entry.Message.Offset, entry.Message.Count);
-        return (utf8Slice, fullMessage, prefixResult);
+        AppendTokens(context, body.Slice(cursor), segments);
     }
+
+    private void AppendTokens(in RenderContext context, ReadOnlySpan<byte> text, IList<RenderSegment> segments)
+    {
+        if (text.IsEmpty)
+            return;
+
+        if (!_tokenResolution.HasEnrichers)
+        {
+            segments.Add(new RenderSegment(text.Length, SemanticStyle.Text));
+            return;
+        }
+
+        var cursor = 0;
+        while (cursor < text.Length)
+        {
+            var separator = RenderingChars.IndexOfTokenSeparator(text.Slice(cursor));
+            var tokenLength = separator < 0 ? text.Length - cursor : separator;
+            if (tokenLength > 0)
+                segments.Add(ResolveToken(context, text.Slice(cursor, tokenLength)));
+
+            if (separator < 0)
+                return;
+
+            segments.Add(new RenderSegment(1, SemanticStyle.Punctuation));
+            cursor += tokenLength + 1;
+        }
+    }
+
+    private RenderSegment ResolveToken(in RenderContext context, ReadOnlySpan<byte> token) =>
+        _tokenResolution.TryResolve(context, token, out var segment)
+            ? segment
+            : new RenderSegment(token.Length, SemanticStyle.Text);
+
+    private readonly record struct StyledHit(int Start, RenderSegment Segment);
 }

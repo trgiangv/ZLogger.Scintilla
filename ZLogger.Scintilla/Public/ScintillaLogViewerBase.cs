@@ -1,8 +1,6 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Diagnostics;
+using System.Globalization;
 using System.Windows.Forms;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
@@ -10,16 +8,37 @@ using ZLogger.Scintilla.Pipeline;
 using ZLogger.Scintilla.Rendering;
 using ZLogger.Scintilla.Services;
 // ReSharper disable ForCanBeConvertedToForeach
-#if NET8_0_OR_GREATER
-using System.Runtime.InteropServices;
+// Fields read outside _pumpGate are thread-safe on their own: the channel, a fixed setting, or Interlocked flags.
+// ReSharper disable InconsistentlySynchronizedField
+#if NET9_0_OR_GREATER
+using Gate = System.Threading.Lock;
+#else
+using Gate = System.Object;
 #endif
 namespace ZLogger.Scintilla.Public;
 
+/// <summary>
+/// Log viewer: producers post to a bounded channel, one pump prepares batches, the UI thread applies them.
+/// <para>
+/// <b>Threads.</b> The channel reader, the history, the preparer and the replay all belong to the pump. Everything
+/// that touches the channel, the history or the replay holds <c>_pumpGate</c>; preparing a batch does not,
+/// because it runs the application's colorizer and linkifier. A filter change does not replay on its own thread:
+/// it asks the pump to, so replay and ingest are ordered and a line is either in the replay or arrives after it.
+/// </para>
+/// <para>
+/// <b>Epoch.</b> Every batch carries the document generation it was prepared for. Clearing or refiltering
+/// starts a new generation, and the UI discards a batch from an older one.
+/// </para>
+/// <para>
+/// <b>Backlog.</b> The pump stops reading once <see cref="LogConstants.MaxQueuedBatches"/> batches are waiting
+/// for the UI, so the channel's capacity and drop policy limit the whole pipeline.
+/// </para>
+/// </summary>
 public abstract class ScintillaLogViewerBase : IDisposable
 {
     private readonly ScintillaDocument _document;
-    private readonly Action<Action> _dispatchInvoke;
-    private readonly Action<Action> _dispatchBeginInvoke;
+    private readonly Action _drainAction;
+    private readonly Func<IZLoggerEntry, LogEntry?> _materialize;
     private readonly LogRenderer _renderStrategy;
     private readonly BatchPreparer _batchPreparer;
     private readonly ScintillaOptions _options;
@@ -27,24 +46,35 @@ public abstract class ScintillaLogViewerBase : IDisposable
     private readonly LogIngestMetrics _metrics = new();
     private readonly LogHistoryBuffer _history;
     private readonly ConcurrentQueue<PreparedBatch> _renderQueue = new();
+    private readonly List<LogEntry> _batchBuffer;
     private readonly List<LogEntry> _filterBuffer;
-    private readonly object _stateGate = new();
+    private readonly Gate _stateGate = new();
+    private readonly Gate _pumpGate = new();
+    private readonly SemaphoreSlim _pumpWake = new(0, 1);
     private readonly SearchCoordinator _search;
-    private readonly bool _autoScroll;
     private ScintillaLogProcessor? _processor;
-    private List<LogEntry> _batchBuffer;
+    private volatile CultureInfo? _pumpCulture;
     private List<Action>? _disposeActions;
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
-    private long _clearEpoch;
-    private int _uiDrainScheduled;
-    private CancellationTokenSource? _filterCts;
-    private long _filterVersion;
+    private Task? _stoppingPump;
+    private long _documentEpoch;
+    private long _clearGeneration;
+    private int _replayRequested;
+    private IEnumerator<List<LogEntry>>? _replayChunks;
+    private long _replayEpoch;
+    private int _drainScheduled;
+    private int _drainYielding;
+    private int _pumpParked;
+    private int _pumpIdle;
+    private int _trimPending;
     private int _minimumFilterLevel = (int)LogLevel.Trace;
     private IScintillaTheme _currentTheme;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public ScintillaNET.Scintilla ScintillaControl { get; }
+
+    internal bool IncludeScopes => _options.IncludeScopes;
 
     protected ScintillaLogViewerBase(Action<ScintillaOptions>? configure)
     {
@@ -52,41 +82,29 @@ public abstract class ScintillaLogViewerBase : IDisposable
         configure?.Invoke(resolved);
         _options = resolved;
         _currentTheme = resolved.Theme;
-        _autoScroll = resolved.AutoScroll;
 
-        ScintillaControl = new ScintillaNET.Scintilla
+        var control = new LogScintillaControl
         {
             Dock = DockStyle.Fill,
-            BorderStyle = ScintillaNET.BorderStyle.None,
+            BorderStyle = ScintillaNET.BorderStyle.None
         };
+        ScintillaControl = control;
+        control.Painted += OnControlPainted;
 
-        _dispatchInvoke = action =>
-        {
-            if (ScintillaControl.IsDisposed) return;
-            if (!ScintillaControl.IsHandleCreated)
-            {
-                if (!ScintillaControl.InvokeRequired) action();
-                return;
-            }
-            if (!ScintillaControl.InvokeRequired) action();
-            else ScintillaControl.Invoke(action);
-        };
-        _dispatchBeginInvoke = action =>
-        {
-            if (ScintillaControl.IsDisposed || !ScintillaControl.IsHandleCreated) return;
-            ScintillaControl.BeginInvoke(action);
-        };
 
-        _document = new ScintillaDocument(ScintillaControl, resolved, _currentTheme);
+        _drainAction = DrainRenderQueue;
+
+        _document = new ScintillaDocument(control, resolved, _currentTheme);
         _renderStrategy = new LogRenderer(resolved.FontFamily, resolved.FontSize, resolved);
-        _batchPreparer = new BatchPreparer(_renderStrategy, resolved.EnableTokenLinks);
+        _batchPreparer = new BatchPreparer(_renderStrategy, ReportError);
         _batchBuffer = new List<LogEntry>(resolved.MaxBatchSize);
         _filterBuffer = new List<LogEntry>(resolved.MaxBatchSize);
-        _ingestPump = new LogIngestPump(resolved);
+        _ingestPump = new LogIngestPump(resolved, OnEntryDropped);
+        _materialize = MaterializeDeferred;
 
         var maxHistory = resolved.DisableHistory ? 0 : Math.Max(0, resolved.MaxHistoryEntries);
         _history = new LogHistoryBuffer(_metrics, maxHistory);
-        _search = new SearchCoordinator(_document, Dispatch, DispatchSearchAsync);
+        _search = new SearchCoordinator(_document, Dispatch);
 
         ApplyInitialStylesDeferred();
         ApplyNativeThemeToControl();
@@ -102,12 +120,21 @@ public abstract class ScintillaLogViewerBase : IDisposable
         {
             if (_cts != null) return;
             _cts = new CancellationTokenSource();
-            _pumpTask = Task.Run(() => PumpAsync(_cts.Token), _cts.Token);
+            var token = _cts.Token;
+            var previous = _stoppingPump;
+            _stoppingPump = null;
+            _pumpTask = Task.Run(() => PumpAsync(previous, token));
         }
     }
 
+    /// <summary>
+    /// Stops the pump. Called off the UI thread, it returns once the pump has finished. On the UI thread it returns
+    /// at once, because a colorizer or linkifier on the pump may be waiting for that thread; the pump then stops
+    /// after its current step, and <see cref="Start"/> lets it finish before another one runs.
+    /// </summary>
     public void Stop()
     {
+        var onUiThread = !ScintillaControl.InvokeRequired;
         CancellationTokenSource? cts;
         Task? pumpTask;
         lock (_stateGate)
@@ -116,32 +143,56 @@ public abstract class ScintillaLogViewerBase : IDisposable
             pumpTask = _pumpTask;
             _cts = null;
             _pumpTask = null;
+            if (onUiThread && pumpTask is { IsCompleted: false })
+                _stoppingPump = pumpTask;
         }
         if (cts == null) return;
         cts.Cancel();
-        try
+        if (onUiThread && pumpTask is { IsCompleted: false })
         {
-            pumpTask?.GetAwaiter().GetResult();
+            _ = pumpTask.ContinueWith(static (_, state) => ((CancellationTokenSource)state!).Dispose(), cts,
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
-        catch (OperationCanceledException)
+        else
         {
-            // ignored
+            try
+            {
+                pumpTask?.GetAwaiter().GetResult();
+            }
+            finally
+            {
+                cts.Dispose();
+            }
         }
-        finally
-        {
-            cts.Dispose();
-        }
+
+        // The pump is what ends a pause for a window that does not paint.
+        Volatile.Write(ref _drainYielding, 0);
+        if (!_renderQueue.IsEmpty)
+            ScheduleDrain();
+        FinishPendingTrim();
     }
 
     public void Clear()
     {
         ThrowIfDisposed();
-        Interlocked.Increment(ref _clearEpoch);
-        _history.DrainAll(static e => e.ReleaseBuffer());
-        _ingestPump.Drain(static e => e.ReleaseBuffer());
-        DrainAndDiscardRenderQueue();
-        _metrics.ResetOnClear();
-        Dispatch(() => _document.Clear());
+        lock (_pumpGate)
+        {
+            var epoch = Interlocked.Increment(ref _documentEpoch);
+            _clearGeneration++;
+            CancelReplay();
+            _history.Clear();
+            _metrics.DecrementBacklog(_ingestPump.Drain(DiscardPending));
+            DiscardRenderQueue();
+
+            // Called off the UI thread, the document is cleared in queue order: waiting here for the UI thread
+            // could deadlock, and clearing later could erase lines logged after this call.
+            if (ScintillaControl.InvokeRequired)
+                _renderQueue.Enqueue(PreparedBatch.ForAction(DocumentAction.Clear, epoch));
+            else
+                _document.Clear();
+        }
+
+        ScheduleDrain();
     }
 
     public void SetTheme(IScintillaTheme theme)
@@ -157,8 +208,9 @@ public abstract class ScintillaLogViewerBase : IDisposable
     {
         ThrowIfDisposed();
         _processor?.SetPrettyJson(enabled);
+        if (_renderStrategy.IsPrettyJsonEnabled == enabled) return;
         _renderStrategy.SetPrettyJson(enabled);
-        ReapplyCurrentFilter();
+        RequestReplay();
     }
 
     public void SetLineNumbers(bool enabled)
@@ -179,12 +231,22 @@ public abstract class ScintillaLogViewerBase : IDisposable
         processor.SetJsonDepth(_options.JsonDecomposeDepth);
         processor.SetCollectionLimit(_options.JsonDecomposeMaxCollection);
         processor.SetCustomSerializer(_options.CustomSerializer);
+        processor.SetPrettyJson(_renderStrategy.IsPrettyJsonEnabled);
+        processor.SetCaptureAllParameters(_options.Linkifier is not null);
+        processor.SetDeferredSink(TryPostDeferred, _pumpCulture);
     }
 
+    /// <summary>
+    /// Shows entries at or above <paramref name="minimumLevel"/>. With history disabled, there is nothing to
+    /// rebuild the document from, so the filter applies to new entries only and existing lines stay.
+    /// </summary>
     public void SetFilter(LogLevel minimumLevel)
     {
         ThrowIfDisposed();
-        ApplyFilterLevel(minimumLevel);
+        var clamped = ClampFilterLevel(minimumLevel);
+        if ((LogLevel)Volatile.Read(ref _minimumFilterLevel) == clamped) return;
+        Interlocked.Exchange(ref _minimumFilterLevel, (int)clamped);
+        RequestReplay();
     }
 
     public void HighlightSearch(string pattern, bool useRegex = false) { ThrowIfDisposed(); _search.HighlightSearch(pattern, useRegex); }
@@ -203,18 +265,50 @@ public abstract class ScintillaLogViewerBase : IDisposable
     internal bool TryPost(LogEntry entry)
     {
         if (_disposed)
+            return false;
+
+        _metrics.RecordAccepted();
+        if (!_ingestPump.TryPost(entry))
         {
-            entry.ReleaseBuffer();
+            OnEntryDropped(new PendingEntry(entry));
             return false;
         }
-        if (_ingestPump.TryPost(entry))
+
+        WakeIfIdle();
+        return true;
+    }
+
+    /// <summary>
+    /// Takes ownership of <paramref name="entry"/>, which goes back to ZLogger once formatted or dropped, unless
+    /// the backlog is already large. ZLogger's pools never shrink, so every entry waiting at once would stay
+    /// in memory for good. Past the limit the caller formats, which also spreads a burst over its threads.
+    /// </summary>
+    private bool TryPostDeferred(IZLoggerEntry entry)
+    {
+        if (_metrics.PendingEntryCount >= LogConstants.MaxDeferredBacklog)
+            return false;
+
+        if (_disposed)
         {
-            _metrics.RecordAccepted();
+            entry.Return();
             return true;
         }
-        _metrics.RecordDrop();
-        entry.ReleaseBuffer();
-        return false;
+
+        _metrics.RecordAccepted();
+        if (!_ingestPump.TryPost(entry))
+            OnEntryDropped(new PendingEntry(entry));
+        else
+            WakeIfIdle();
+        return true;
+    }
+
+    private LogEntry? MaterializeDeferred(IZLoggerEntry entry)
+    {
+        if (!WouldLeaveHistoryAtOnce())
+            return _processor!.Materialize(entry);
+
+        entry.Return();
+        return null;
     }
 
     public void RegisterDisposeAction(Action action)
@@ -244,13 +338,16 @@ public abstract class ScintillaLogViewerBase : IDisposable
 
         ScintillaControl.HandleCreated -= OnHandleCreatedApplyStyles;
         ScintillaControl.HandleCreated -= OnHandleCreatedApplyTheme;
+        ScintillaControl.Painted -= OnControlPainted;
         Stop();
-        CancelFilterReplay();
-        _ingestPump.Drain(static e => e.ReleaseBuffer());
-        _history.DrainAll(static e => e.ReleaseBuffer());
-        DrainAndDiscardRenderQueue();
-        _ingestPump.Complete();
-        _batchPreparer.Dispose();
+        lock (_pumpGate)
+        {
+            CancelReplay();
+            _metrics.DecrementBacklog(_ingestPump.Drain(DiscardPending));
+            _history.Clear();
+            DiscardRenderQueue();
+            _ingestPump.Complete();
+        }
         _document.Dispose();
         DisposeHostResources();
     }
@@ -265,150 +362,166 @@ public abstract class ScintillaLogViewerBase : IDisposable
         };
     }
 
-    private void ApplyFilterLevel(LogLevel minimumLevel)
+    private async Task PumpAsync(Task? previous, CancellationToken cancellationToken)
     {
-        var clamped = ClampFilterLevel(minimumLevel);
-        if ((LogLevel)Volatile.Read(ref _minimumFilterLevel) == clamped) return;
-        Interlocked.Exchange(ref _minimumFilterLevel, (int)clamped);
-        ReplayFilteredHistory(clamped);
-    }
+        // A pump that Stop() did not wait for finishes first, so the pipeline never has two owners.
+        if (previous is not null)
+            await previous.ConfigureAwait(false);
 
-    private void ReapplyCurrentFilter()
-    {
-        var currentMinimumLevel = (LogLevel)Volatile.Read(ref _minimumFilterLevel);
-        if (currentMinimumLevel > LogLevel.Trace)
-            ReplayFilteredHistory(currentMinimumLevel);
-    }
-
-    private void ReplayFilteredHistory(LogLevel minimumLevel)
-    {
-        var currentVersion = Interlocked.Increment(ref _filterVersion);
-        var clearEpoch = Volatile.Read(ref _clearEpoch);
-        if (!ScintillaControl.IsHandleCreated)
-            return;
-        var nextCts = new CancellationTokenSource();
-        var previousCts = Interlocked.Exchange(ref _filterCts, nextCts);
-        previousCts?.Cancel();
-        previousCts?.Dispose();
-        var token = nextCts.Token;
-        Task.Run(() => ExecuteFilterReplay(minimumLevel, clearEpoch, currentVersion, token), token);
-    }
-
-    private void ExecuteFilterReplay(LogLevel minimumLevel, long clearEpoch, long currentVersion, CancellationToken token)
-    {
-        if (token.IsCancellationRequested) return;
-        var replayPreparer = new BatchPreparer(_renderStrategy, _options.EnableTokenLinks);
         try
         {
-            var batches = new List<PreparedBatch>();
-            foreach (var chunk in _history.CaptureChunkedSnapshot(minimumLevel, cancellationToken: token))
+            // Deferred messages are formatted under this culture, so only callers using the same one may defer.
+            _pumpCulture = CultureInfo.CurrentCulture;
+            _processor?.SetDeferredSink(TryPostDeferred, _pumpCulture);
+
+            while (!cancellationToken.IsCancellationRequested)
             {
-                if (token.IsCancellationRequested) break;
-                batches.Add(replayPreparer.Prepare(chunk, clearEpoch, entriesToRelease: null));
+                await WaitForPumpWorkAsync(cancellationToken).ConfigureAwait(false);
+                FinishPumpPass(RunPumpSteps(cancellationToken));
             }
-            if (token.IsCancellationRequested)
-            {
-                foreach (var b in batches) b.ReturnBuffers();
-                return;
-            }
-            _dispatchBeginInvoke(() => ApplyFilteredReplay(batches, currentVersion, clearEpoch));
         }
-        finally { replayPreparer.Dispose(); }
+        catch (OperationCanceledException)
+        {
+            // Stop() was called.
+        }
     }
 
-    private void ApplyFilteredReplay(List<PreparedBatch> batches, long expectedVersion, long expectedEpoch)
+    private async Task WaitForPumpWorkAsync(CancellationToken cancellationToken)
     {
-        if (_disposed || expectedVersion != Volatile.Read(ref _filterVersion) || expectedEpoch != Volatile.Read(ref _clearEpoch))
+        await _pumpWake.WaitAsync(_options.FlushIntervalMs, cancellationToken).ConfigureAwait(false);
+
+        // The UI thread paused after a long drain. The next paint normally ends the pause; this is for a
+        // window that does not paint, such as a minimized one.
+        if (Volatile.Read(ref _drainYielding) != 0)
         {
-            foreach (var b in batches) b.ReturnBuffers();
-            return;
+            await Task.Delay(1, cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _drainYielding, 0);
         }
-        _document.Clear();
-        var totalRendered = 0;
-        _document.BeginBatchUpdate();
+    }
+
+    /// <summary>Runs pump steps until there is nothing left to do. Returns whether any step did work.</summary>
+    private bool RunPumpSteps(CancellationToken cancellationToken)
+    {
+        var worked = false;
+        while (!cancellationToken.IsCancellationRequested && PumpStep())
+            worked = true;
+        return worked;
+    }
+
+    private void FinishPumpPass(bool worked)
+    {
+        if (!_renderQueue.IsEmpty)
+            ScheduleDrain();
+
+        MarkIdleIf(!worked);
+        if (!worked)
+            FinishPendingTrim();
+    }
+
+    /// <summary>
+    /// After a quiet interval, the next message is shown at once instead of waiting for the next flush.
+    /// Only messages close together are held back to be batched, which is when batching helps.
+    /// </summary>
+    private void MarkIdleIf(bool idle)
+    {
+        Volatile.Write(ref _pumpIdle, idle ? 1 : 0);
+        if (idle && _metrics.PendingEntryCount > 0)
+            WakeIfIdle();
+    }
+
+    private void WakeIfIdle()
+    {
+        if (Volatile.Read(ref _pumpIdle) != 0 && Interlocked.Exchange(ref _pumpIdle, 0) != 0)
+            WakePump();
+    }
+
+    /// <summary>Does one unit of work. Returns false when there is nothing to do or the UI must catch up first.</summary>
+    private bool PumpStep()
+    {
+        if (_renderQueue.Count >= LogConstants.MaxQueuedBatches)
+        {
+            Volatile.Write(ref _pumpParked, 1);
+            ScheduleDrain();
+            return false;
+        }
+
+        if (_disposed)
+            return false;
+
         try
         {
-            foreach (var batch in batches)
+            return Volatile.Read(ref _replayRequested) != 0 || Volatile.Read(ref _replayChunks) is not null
+                ? ReplayStep()
+                : IngestStep();
+        }
+        catch (Exception ex)
+        {
+            // The entries involved are already out of the channel, so this cannot repeat on the same input.
+            ReportError(ex);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Reads and records entries under the lock, and prepares them outside it: preparing runs the colorizer and
+    /// linkifier, which may wait for the UI thread while the UI thread waits for the lock in <see cref="Clear"/>.
+    /// </summary>
+    private bool IngestStep()
+    {
+        long epoch;
+        long clearGeneration;
+        lock (_pumpGate)
+        {
+            if (_disposed || _ingestPump.TryReadBatch(_batchBuffer, _materialize, _metrics) == 0)
+                return false;
+
+            epoch = Volatile.Read(ref _documentEpoch);
+            clearGeneration = _clearGeneration;
+        }
+
+        try
+        {
+            var visible = FilterBatch((LogLevel)Volatile.Read(ref _minimumFilterLevel));
+            if (visible.Count > 0 && !WouldBeTrimmedAtOnce())
+                EnqueuePreparedBatch(_batchPreparer.Prepare(visible, epoch));
+        }
+        finally
+        {
+            lock (_pumpGate)
             {
-                try
+                // A Clear() while these were being prepared removed them along with everything before it.
+                if (_history.IsEnabled && clearGeneration == _clearGeneration)
                 {
-                    if (batch.EntryCount <= 0) continue;
-                    _document.ApplyPreparedBatch(batch);
-                    totalRendered += batch.EntryCount;
+                    _history.EnqueueBatch(_batchBuffer);
+                    _history.TrimIfNeeded();
                 }
-                finally { batch.ReturnBuffers(); }
             }
-        }
-        finally { _document.EndBatchUpdate(totalRendered > 0 && _autoScroll); }
-        if (totalRendered > 0) _metrics.RecordRendered(totalRendered);
-        TrimDocumentIfNeeded();
-        _document.InvalidateAndRefreshSearch();
-    }
 
-    private void CancelFilterReplay()
-    {
-        var cts = Interlocked.Exchange(ref _filterCts, null);
-        cts?.Cancel();
-        cts?.Dispose();
-    }
+            _batchBuffer.Clear();
+        }
 
-    private async Task PumpAsync(CancellationToken cancellationToken)
-    {
-#if NET8_0_OR_GREATER
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_options.FlushIntervalMs));
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
-            while (ProcessBatch()) { /* ignored */ }
-        }
-#else
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            await Task.Delay(_options.FlushIntervalMs, cancellationToken).ConfigureAwait(false);
-            while (ProcessBatch()) { /* ignored */ }
-        }
-#endif
-    }
-
-    private bool ProcessBatch()
-    {
-        var batchEpoch = Volatile.Read(ref _clearEpoch);
-        var minimumLevel = (LogLevel)Volatile.Read(ref _minimumFilterLevel);
-        var readCount = _ingestPump.TryReadBatch(_batchBuffer);
-        if (readCount <= 0) return false;
-
-        _metrics.DecrementBacklog(readCount);
-        if (batchEpoch != Volatile.Read(ref _clearEpoch))
-        {
-            ReleaseBatchEntries(_batchBuffer);
-            return true;
-        }
-        if (_history.IsEnabled)
-        {
-            _history.EnqueueBatch(_batchBuffer);
-            _history.TrimIfNeeded();
-        }
-        var visibleEntries = FilterBatch(minimumLevel);
-        if (visibleEntries.Count == 0)
-        {
-            if (!_history.IsEnabled) ReleaseBatchEntries(_batchBuffer);
-            return true;
-        }
-        List<LogEntry>? entriesToRelease = null;
-        if (!_history.IsEnabled)
-        {
-            entriesToRelease = visibleEntries.Count == _batchBuffer.Count
-                ? visibleEntries
-                : _batchBuffer;
-        }
-        var prepared = _batchPreparer.Prepare(visibleEntries, batchEpoch, entriesToRelease);
-        EnqueuePreparedBatch(prepared);
         return true;
     }
 
+    /// <summary>
+    /// True when the lines still waiting in the channel will fill the document on their own, so that
+    /// these would be trimmed before anyone could see them. Waiting lines only count if they are certain
+    /// to arrive: a filter can hide them, and a drop policy that removes queued entries can lose them.
+    /// </summary>
+    private bool WouldBeTrimmedAtOnce() =>
+        _metrics.PendingEntryCount >= _options.MaxLines
+        && (LogLevel)Volatile.Read(ref _minimumFilterLevel) <= LogLevel.Trace
+        && _options.DropPolicy is System.Threading.Channels.BoundedChannelFullMode.DropWrite or System.Threading.Channels.BoundedChannelFullMode.Wait;
+
+    /// <summary>The same for the history, so that formatting the entry would serve no purpose at all.</summary>
+    private bool WouldLeaveHistoryAtOnce() =>
+        WouldBeTrimmedAtOnce() && _metrics.PendingEntryCount >= _options.MaxHistoryEntries;
+
     private List<LogEntry> FilterBatch(LogLevel minimumLevel)
     {
-        if (minimumLevel <= LogLevel.Trace) return ConsumeBatchBuffer();
+        if (minimumLevel <= LogLevel.Trace)
+            return _batchBuffer;
+
         _filterBuffer.Clear();
         for (var i = 0; i < _batchBuffer.Count; i++)
         {
@@ -418,119 +531,325 @@ public abstract class ScintillaLogViewerBase : IDisposable
         return _filterBuffer;
     }
 
-    private List<LogEntry> ConsumeBatchBuffer()
+    private void RequestReplay()
     {
-        var result = _batchBuffer;
-        _batchBuffer = new List<LogEntry>(result.Capacity);
-        return result;
+        if (!_history.IsEnabled)
+            return;
+
+        // The epoch first: a pump that sees the request must also see the epoch it belongs to.
+        Interlocked.Increment(ref _documentEpoch);
+        Volatile.Write(ref _replayRequested, 1);
+        WakePump();
     }
 
-    private void EnqueuePreparedBatch(PreparedBatch batch)
+    /// <summary>
+    /// Replays history one chunk at a time, so that the render queue's limit and the UI's drain budget apply.
+    /// Ingest waits until it finishes, which keeps every line in order and in the document exactly once.
+    /// </summary>
+    private bool ReplayStep()
     {
-        _renderQueue.Enqueue(batch);
-        if (Interlocked.Exchange(ref _uiDrainScheduled, 1) == 1) return;
-        if (!ScintillaControl.IsHandleCreated)
+        IEnumerator<List<LogEntry>> chunks;
+        List<LogEntry> chunk;
+        long epoch;
+        lock (_pumpGate)
         {
-            Interlocked.Exchange(ref _uiDrainScheduled, 0);
+            if (_disposed)
+                return false;
+
+            if (Interlocked.Exchange(ref _replayRequested, 0) != 0)
+            {
+                _replayChunks?.Dispose();
+                _replayEpoch = Volatile.Read(ref _documentEpoch);
+                var level = (LogLevel)Volatile.Read(ref _minimumFilterLevel);
+                _replayChunks = _history.CaptureChunkedSnapshot(level, _options.MaxBatchSize).GetEnumerator();
+                EnqueuePreparedBatch(PreparedBatch.ForAction(DocumentAction.ResetForReplay, _replayEpoch));
+                return true;
+            }
+
+            // Cleared since PumpStep looked.
+            if (_replayChunks is null)
+                return true;
+
+            if (!_replayChunks.MoveNext())
+            {
+                CancelReplay();
+                return true;
+            }
+
+            chunks = _replayChunks;
+            // The snapshot iterator never yields null; net48's IEnumerator<T>.Current is not annotated.
+            // ReSharper disable AssignNullToNotNullAttribute
+            chunk = chunks.Current;
+            epoch = _replayEpoch;
+        }
+
+        // Outside the lock for the same reason as in IngestStep. The chunk is a list of its own, so a Clear() does
+        // not change it.
+        var prepared = _batchPreparer.Prepare(chunk, epoch);
+        // ReSharper restore AssignNullToNotNullAttribute
+        lock (_pumpGate)
+        {
+            if (ReferenceEquals(chunks, _replayChunks))
+                EnqueuePreparedBatch(prepared);
+            else
+                prepared.ReturnBuffers();
+        }
+
+        return true;
+    }
+
+    private void CancelReplay()
+    {
+        Volatile.Write(ref _replayRequested, 0);
+        _replayChunks?.Dispose();
+        _replayChunks = null;
+    }
+
+    private void OnEntryDropped(PendingEntry entry)
+    {
+        _metrics.RecordDrop();
+        DiscardPending(entry);
+    }
+
+    private static void DiscardPending(PendingEntry entry)
+    {
+        entry.Deferred?.Return();
+    }
+
+    private void WakePump()
+    {
+        try
+        {
+            if (_pumpWake.CurrentCount == 0)
+                _pumpWake.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // Another thread woke it first, which is all this wanted.
+        }
+    }
+
+    private void EnqueuePreparedBatch(in PreparedBatch batch)
+    {
+        // A pump that Stop() did not wait for can finish a batch after Dispose() emptied the queue.
+        if (_disposed)
+        {
+            batch.ReturnBuffers();
             return;
         }
-        _dispatchBeginInvoke(DrainRenderQueue);
+
+        _renderQueue.Enqueue(batch);
+        ScheduleDrain();
+    }
+
+    private void ScheduleDrain()
+    {
+        if (Volatile.Read(ref _drainYielding) != 0)
+            return;
+        if (Interlocked.Exchange(ref _drainScheduled, 1) != 0)
+            return;
+
+        try
+        {
+            if (_disposed || ScintillaControl.IsDisposed || !ScintillaControl.IsHandleCreated)
+                Volatile.Write(ref _drainScheduled, 0);
+            else
+                ScintillaControl.BeginInvoke(_drainAction);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            // The handle went away. The pump schedules again on its next pass, and so does OnHandleCreated.
+            Volatile.Write(ref _drainScheduled, 0);
+        }
     }
 
     private void DrainRenderQueue()
     {
-        if (_disposed) return;
-        var appliedAny = false;
-        _document.BeginBatchUpdate();
+        // Cleared before any work can throw, so that a failure cannot leave rendering stopped for good.
+        Volatile.Write(ref _drainScheduled, 0);
+        if (_disposed)
+            return;
+
         try
         {
-            while (true)
-            {
-                while (_renderQueue.TryDequeue(out var batch))
-                {
-                    ApplyPreparedBatch(batch);
-                    appliedAny = true;
-                }
-                Interlocked.Exchange(ref _uiDrainScheduled, 0);
-                if (_renderQueue.IsEmpty || Interlocked.Exchange(ref _uiDrainScheduled, 1) == 1) break;
-            }
-        }
-        finally { _document.EndBatchUpdate(appliedAny && _autoScroll); }
-        if (appliedAny)
-        {
-            TrimDocumentIfNeeded();
-            _document.InvalidateAndRefreshSearch();
-        }
-    }
-
-    private void ApplyPreparedBatch(PreparedBatch batch)
-    {
-        try
-        {
-            if (batch.Epoch != Volatile.Read(ref _clearEpoch)) return;
-            if (batch.EntryCount > 0)
-            {
-                _document.ApplyPreparedBatch(batch);
-                _metrics.RecordRendered(batch.EntryCount);
-            }
-        }
-        finally
-        {
-            batch.ReleaseEntryBuffers();
-            batch.ReturnBuffers();
-        }
-    }
-
-    private void TrimDocumentIfNeeded()
-    {
-        var lineCount = _document.GetLineCount();
-        var overflow = lineCount - _options.MaxLines;
-        if (overflow <= 0) return;
-        _document.TrimHeadLines(overflow);
-    }
-
-    private void DrainAndDiscardRenderQueue()
-    {
-        while (_renderQueue.TryDequeue(out var batch))
-        {
-            batch.ReleaseEntryBuffers();
-            batch.ReturnBuffers();
-        }
-    }
-
-    private void Dispatch(Action action) => _dispatchInvoke(action);
-
-    private Task<SearchMatch> DispatchSearchAsync(Func<SearchMatch> action, CancellationToken ct)
-    {
-        if (ct.IsCancellationRequested) return Task.FromCanceled<SearchMatch>(ct);
-        var tcs = new TaskCompletionSource<SearchMatch>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var registration = ct.CanBeCanceled ? ct.Register(() => tcs.TrySetCanceled(ct)) : default;
-        var capturedRegistration = registration;
-        try
-        {
-            _dispatchBeginInvoke(() =>
-            {
-                try
-                {
-                    if (_disposed) { tcs.TrySetResult(SearchMatch.NotFound); return; }
-                    tcs.TrySetResult(action());
-                }
-                catch (Exception ex) { tcs.TrySetException(ex); }
-                finally { capturedRegistration.Dispose(); }
-            });
+            ApplyQueuedBatches();
         }
         catch (Exception ex)
         {
-            registration.Dispose();
-            tcs.TrySetException(ex);
+            ReportError(ex);
         }
-        return tcs.Task;
+
+        // A drain posted right away would run ahead of paint and input, because Windows delivers posted
+        // messages first, and the window would freeze for as long as logs kept coming. So the next one
+        // waits for the next paint, which comes after any pending input.
+        var more = !_renderQueue.IsEmpty;
+        if (more && _pumpTask is not null)
+        {
+            Volatile.Write(ref _drainYielding, 1);
+            WakePump();
+        }
+        else if (more)
+        {
+            ScheduleDrain();
+        }
+        else if (Interlocked.Exchange(ref _pumpParked, 0) != 0)
+        {
+            WakePump();
+        }
+    }
+
+    private void OnControlPainted(object? sender, EventArgs e)
+    {
+        if (Interlocked.Exchange(ref _drainYielding, 0) != 0)
+            ScheduleDrain();
+    }
+
+    private void ApplyQueuedBatches()
+    {
+        if (_renderQueue.IsEmpty)
+            return;
+
+        var deadline = Stopwatch.GetTimestamp() + LogConstants.DrainBudgetMs * Stopwatch.Frequency / 1000;
+        var changed = false;
+        _document.BeginBatchUpdate();
+        try
+        {
+            while (_renderQueue.TryDequeue(out var batch))
+            {
+                changed |= ApplyBatch(batch);
+                if (Stopwatch.GetTimestamp() >= deadline)
+                    break;
+            }
+
+            if (changed)
+                TrimDocumentIfNeeded();
+        }
+        finally
+        {
+            _document.EndBatchUpdate(changed);
+        }
+
+        if (changed)
+            _document.RefreshSearch();
+    }
+
+    private bool ApplyBatch(in PreparedBatch batch)
+    {
+        try
+        {
+            if (batch.Epoch != Volatile.Read(ref _documentEpoch))
+                return false;
+
+            switch (batch.Action)
+            {
+                case DocumentAction.ResetForReplay:
+                    _document.ResetForReplay();
+                    return true;
+                case DocumentAction.Clear:
+                    _document.Clear();
+                    return true;
+            }
+
+            if (batch.EntryCount <= 0)
+                return false;
+
+            _document.ApplyPreparedBatch(batch);
+            _metrics.RecordRendered(batch.EntryCount);
+            return true;
+        }
+        finally
+        {
+            batch.ReturnBuffers();
+        }
+    }
+
+    /// <summary>
+    /// Under load, trims in steps of a tenth of the document. Scintilla remembers the lines waiting for word wrap
+    /// as one range, so a trim at the start plus an append at the end queues the whole document to be wrapped
+    /// again, and doing that on every drain keeps the UI thread busy for as long as logs keep coming.
+    /// The document returns to exactly <see cref="ScintillaOptions.MaxLines"/> as soon as the logs pause.
+    /// </summary>
+    private void TrimDocumentIfNeeded()
+    {
+        var overflow = GetOverflowLines();
+        if (overflow <= 0)
+            return;
+
+        if (overflow < Math.Max(LogConstants.MinTrimStepLines, _options.MaxLines / 10))
+        {
+            Volatile.Write(ref _trimPending, 1);
+            return;
+        }
+
+        Volatile.Write(ref _trimPending, 0);
+        _document.TrimHeadLines(overflow);
+    }
+
+    private void TrimDocumentExactly()
+    {
+        if (_disposed)
+            return;
+
+        var overflow = GetOverflowLines();
+        if (overflow <= 0)
+            return;
+
+        _document.TrimHeadLines(overflow);
+        _document.RefreshSearch();
+    }
+
+    /// <summary>Scintilla counts the empty line after the final line break, which holds no message.</summary>
+    private int GetOverflowLines() => _document.GetLineCount() - 1 - _options.MaxLines;
+
+    private void FinishPendingTrim()
+    {
+        if (Interlocked.Exchange(ref _trimPending, 0) == 0)
+            return;
+
+        try
+        {
+            if (!_disposed && ScintillaControl.IsHandleCreated)
+                ScintillaControl.BeginInvoke(TrimDocumentExactly);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            // The handle went away, and the document with it.
+        }
+    }
+
+    private void DiscardRenderQueue()
+    {
+        while (_renderQueue.TryDequeue(out var batch))
+            batch.ReturnBuffers();
+    }
+
+    private void ReportError(Exception ex)
+    {
+        try
+        {
+            _options.EnrichmentErrorSink?.Invoke(ex);
+        }
+        catch
+        {
+            // A broken sink must not stop the pipeline it reports on.
+        }
+    }
+
+    private void Dispatch(Action action)
+    {
+        if (ScintillaControl.IsDisposed)
+            return;
+
+        if (ScintillaControl.InvokeRequired)
+            ScintillaControl.Invoke(action);
+        else
+            action();
     }
 
     private void RefreshStyles()
     {
         if (_disposed) return;
-        _dispatchInvoke(() => _document.ApplyThemeStyles(_renderStrategy, _currentTheme));
+        Dispatch(() => _document.ApplyThemeStyles(_renderStrategy, _currentTheme));
     }
 
     private void ApplyInitialStylesDeferred()
@@ -545,8 +864,7 @@ public abstract class ScintillaLogViewerBase : IDisposable
     {
         ScintillaControl.HandleCreated -= OnHandleCreatedApplyStyles;
         _document.ApplyThemeStyles(_renderStrategy, _currentTheme);
-        if (Interlocked.Exchange(ref _uiDrainScheduled, 1) == 0)
-            _dispatchBeginInvoke(DrainRenderQueue);
+        ScheduleDrain();
     }
 
     private void ApplyNativeThemeToControl()
@@ -564,7 +882,7 @@ public abstract class ScintillaLogViewerBase : IDisposable
     private void ApplyNativeTheme()
     {
         if (_disposed) return;
-        _dispatchInvoke(() =>
+        Dispatch(() =>
         {
             if (!ScintillaControl.IsHandleCreated) return;
             NativeWindowsHelper.ApplyScrollbarTheme(ScintillaControl.Handle, _currentTheme.IsDark);
@@ -579,18 +897,5 @@ public abstract class ScintillaLogViewerBase : IDisposable
 #else
         if (_disposed) throw new ObjectDisposedException(GetType().FullName);
 #endif
-    }
-
-    private static void ReleaseBatchEntries(IReadOnlyList<LogEntry> entries)
-    {
-#if NET8_0_OR_GREATER
-        if (entries is List<LogEntry> list)
-        {
-            var span = CollectionsMarshal.AsSpan(list);
-            foreach (var t in span) t.ReleaseBuffer();
-            return;
-        }
-#endif
-        foreach (var t in entries) t.ReleaseBuffer();
     }
 }

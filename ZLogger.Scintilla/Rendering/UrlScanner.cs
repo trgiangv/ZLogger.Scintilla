@@ -1,43 +1,39 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Text;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Rendering;
 
-/// <summary>
-/// Detects URLs and email addresses in text spans, and emits styled render segments.
-/// </summary>
+/// <summary>Finds URLs in UTF-8 text and turns the safe ones into clickable links.</summary>
 internal static class UrlScanner
 {
-    public static bool HasPotentialCandidate(ReadOnlySpan<char> text)
-    {
-        foreach (var ch in text)
-        {
-            if (ch is ':' or '/' or '.' or '@')
-                return true;
-        }
-
-        return false;
-    }
-
-    public static int FindAll(ReadOnlySpan<char> text, List<(int Start, int Length)> output)
+    public static void FindAll(ReadOnlySpan<byte> text, List<(int Start, int Length)> output)
     {
         output.Clear();
-        if (text.IsEmpty || !HasPotentialCandidate(text))
-            return 0;
-
         var cursor = 0;
         while (cursor < text.Length)
         {
-            if (!TryFindUrl(text[cursor..], out var localStart, out var length) || length <= 0)
-                break;
+            var start = FindNextStart(text, cursor);
+            if (start < 0)
+                return;
 
-            var absoluteStart = cursor + localStart;
-            output.Add((absoluteStart, length));
-            cursor = absoluteStart + length;
+            var length = MeasureUrl(text, start);
+            if (length <= 0)
+                return;
+
+            output.Add((start, length));
+            cursor = start + length;
         }
+    }
 
-        return output.Count;
+    /// <summary>Creates a link that opens <paramref name="utf8Url"/> if it is safe to open.</summary>
+    public static bool TryCreateLink(ReadOnlySpan<byte> utf8Url, out TokenPayload? payload)
+    {
+        payload = null;
+        if (!TryNormalizeUri(Encoding.UTF8.GetString(utf8Url), out var target))
+            return false;
+
+        payload = TokenPayload.ForLink(() => OpenUrl(target));
+        return true;
     }
 
     public static bool TryNormalizeUri(string candidate, out string targetUri)
@@ -49,192 +45,116 @@ internal static class UrlScanner
         var trimmed = candidate.Trim();
         if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
         {
-            targetUri = absolute.ToString();
+            if (!IsSafeToOpen(absolute))
+                return false;
+
+            targetUri = absolute.AbsoluteUri;
             return true;
         }
 
         if (trimmed.StartsWith("www.", StringComparison.OrdinalIgnoreCase) &&
             Uri.TryCreate("https://" + trimmed, UriKind.Absolute, out var wwwUri))
         {
-            targetUri = wwwUri.ToString();
+            targetUri = wwwUri.AbsoluteUri;
             return true;
         }
 
         return false;
     }
 
-    internal static void EmitUrlOrFallback(
-        string source,
-        int start,
-        int length,
-        SemanticStyle fallbackStyle,
-        RenderTokenWriter writer,
-        bool preserveStyle = false)
-    {
-        var urlText = source.Substring(start, length);
-        if (TryNormalizeUri(urlText, out var targetUri))
-        {
-            var style = preserveStyle ? fallbackStyle : SemanticStyle.TokenLink;
-            var captured = targetUri;
-            writer.Add(urlText, style, TokenPayload.ForLink(() => OpenUrl(captured)), isLink: true);
-        }
-        else
-        {
-            writer.Add(urlText, fallbackStyle);
-        }
-    }
+    /// <summary>
+    /// Log text can come from anywhere, and a click shell-executes the link. Other schemes can start
+    /// programs or open local files, so they stay plain text. A host that needs them can use an
+    /// <see cref="Public.ILinkifier"/>, which keeps that decision in the host's own code.
+    /// </summary>
+    private static bool IsSafeToOpen(Uri uri) => uri.Scheme is "http" or "https";
 
     private static void OpenUrl(string url)
     {
         try
         {
-#if NET5_0_OR_GREATER
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-#else
-            Process.Start(url);
-#endif
         }
         catch
         {
-            // ignored
+            // A missing browser must not take the viewer down with it.
         }
     }
 
-    private static bool TryFindUrl(ReadOnlySpan<char> text, out int start, out int length)
+    private static int FindNextStart(ReadOnlySpan<byte> text, int from)
     {
-        start = 0;
-        length = 0;
+        var scheme = FindSchemeStart(text, from);
+        var www = FindWwwStart(text, from);
+        if (scheme < 0)
+            return www;
+        return www < 0 ? scheme : Math.Min(scheme, www);
+    }
 
-        for (var i = 0; i < text.Length; i++)
+    private static int FindSchemeStart(ReadOnlySpan<byte> text, int from)
+    {
+        var search = from;
+        while (search < text.Length)
         {
-            var ch = text[i];
-            switch (ch)
-            {
-                case ':' when TryFindSchemeUrl(text, i, out start, out length):
-                case 'w' when TryFindWwwUrl(text, i, out start, out length):
-                case '@' when TryFindEmail(text, i, out start, out length):
-                    return true;
-            }
+            var found = text.Slice(search).IndexOf("://"u8);
+            if (found < 0)
+                return -1;
 
+            var mark = search + found;
+            var start = mark;
+            while (start > from && IsSchemeByte(text[start - 1]))
+                start--;
+
+            if (start < mark)
+                return start;
+
+            search = mark + 3;
         }
 
-        return false;
+        return -1;
     }
 
-    private static bool TryFindSchemeUrl(ReadOnlySpan<char> text, int colonIndex, out int start, out int length)
+    private static int FindWwwStart(ReadOnlySpan<byte> text, int from)
     {
-        start = 0;
-        length = 0;
-
-        if (colonIndex + 2 >= text.Length || text[colonIndex + 1] != '/' || text[colonIndex + 2] != '/')
-            return false;
-
-        var urlStart = FindUrlStart(text, colonIndex);
-        var urlEnd = FindUrlEnd(text, urlStart);
-        if (urlEnd <= urlStart)
-            return false;
-
-        start = urlStart;
-        length = urlEnd - urlStart;
-        return true;
-    }
-
-    private static bool TryFindWwwUrl(ReadOnlySpan<char> text, int index, out int start, out int length)
-    {
-        start = 0;
-        length = 0;
-
-        if (index + 4 >= text.Length ||
-            text[index + 1] != 'w' ||
-            text[index + 2] != 'w' ||
-            text[index + 3] != '.' ||
-            !char.IsLetter(text[index + 4]))
+        var search = from;
+        while (search < text.Length)
         {
-            return false;
+            var found = text.Slice(search).IndexOf("www."u8);
+            if (found < 0)
+                return -1;
+
+            var start = search + found;
+            var startsWord = start == from || !IsWordByte(text[start - 1]);
+            if (startsWord && start + 4 < text.Length && RenderingChars.IsAsciiLetter(text[start + 4]))
+                return start;
+
+            search = start + 4;
         }
 
-        var urlEnd = FindUrlEnd(text, index);
-        if (urlEnd <= index)
-            return false;
-
-        start = index;
-        length = urlEnd - index;
-        return true;
+        return -1;
     }
 
-    private static bool TryFindEmail(ReadOnlySpan<char> text, int atIndex, out int start, out int length)
-    {
-        start = 0;
-        length = 0;
-
-        if (atIndex <= 0 || atIndex + 3 >= text.Length)
-            return false;
-
-        var emailStart = atIndex;
-        while (emailStart > 0 && IsEmailChar(text[emailStart - 1]))
-            emailStart--;
-
-        var emailEnd = atIndex + 1;
-        while (emailEnd < text.Length && IsEmailChar(text[emailEnd]))
-            emailEnd++;
-
-        if (emailEnd <= atIndex + 1 || !HasDotAfterAt(text, atIndex, emailEnd))
-            return false;
-
-        start = emailStart;
-        length = emailEnd - emailStart;
-        return true;
-    }
-
-    private static bool HasDotAfterAt(ReadOnlySpan<char> text, int atIndex, int endExclusive)
-    {
-        for (var i = atIndex + 1; i < endExclusive; i++)
-        {
-            if (text[i] == '.')
-                return true;
-        }
-
-        return false;
-    }
-
-    private static int FindUrlStart(ReadOnlySpan<char> text, int colonPos)
-    {
-        var start = colonPos;
-        while (start > 0)
-        {
-            var prev = text[start - 1];
-            if (!char.IsLetterOrDigit(prev) && prev != '+' && prev != '-' && prev != '.')
-                break;
-            start--;
-        }
-
-        return start;
-    }
-
-    private static int FindUrlEnd(ReadOnlySpan<char> text, int start)
+    private static int MeasureUrl(ReadOnlySpan<byte> text, int start)
     {
         var end = start;
-        while (end < text.Length)
-        {
-            var ch = text[end];
-            if (ch is ' ' or '\t' or '<' or '>' or '"' or '\'' or '[' or ']' or '\r' or '\n')
-                break;
-
+        while (end < text.Length && !EndsUrl(text[end]))
             end++;
-        }
 
-        while (end > start)
-        {
-            var last = text[end - 1];
-            if (last is '.' or ',' or ';' or ':' or '!' or '?')
-                end--;
-            else
-                break;
-        }
+        while (end > start && IsTrailingPunctuation(text[end - 1]))
+            end--;
 
-        return end;
+        return end - start;
     }
 
-    private static bool IsEmailChar(char ch)
-        => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_' or '+';
+    private static bool IsSchemeByte(byte value) =>
+        IsWordByte(value) || value is (byte)'+' or (byte)'-' or (byte)'.';
+
+    private static bool IsWordByte(byte value) =>
+        RenderingChars.IsAsciiLetter(value) || RenderingChars.IsAsciiDigit(value);
+
+    private static bool EndsUrl(byte value) =>
+        value is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'
+            or (byte)'<' or (byte)'>' or (byte)'"' or (byte)'\'' or (byte)'[' or (byte)']';
+
+    private static bool IsTrailingPunctuation(byte value) =>
+        value is (byte)'.' or (byte)',' or (byte)';' or (byte)':' or (byte)'!' or (byte)'?';
 }

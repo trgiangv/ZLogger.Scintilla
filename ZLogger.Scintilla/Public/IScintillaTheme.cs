@@ -11,7 +11,6 @@ public interface IScintillaTheme
     Color Background { get; }
     Color Foreground { get; }
 
-    // Log level colors
     Color LevelTrace { get; }
     Color LevelDebug { get; }
     Color LevelInformation { get; }
@@ -19,11 +18,9 @@ public interface IScintillaTheme
     Color LevelError { get; }
     Color LevelCritical { get; }
 
-    // Structural colors
     Color SecondaryText { get; }
     Color Punctuation { get; }
 
-    // JSON token colors
     Color JsonKey { get; }
     Color JsonString { get; }
     Color JsonNumber { get; }
@@ -31,7 +28,6 @@ public interface IScintillaTheme
     Color JsonNull { get; }
     Color JsonDateTime { get; }
 
-    // Link / token colors
     Color LinkForeground { get; }
     Color SearchHighlight { get; }
 }

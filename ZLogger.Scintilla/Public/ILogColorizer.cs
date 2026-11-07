@@ -1,12 +1,11 @@
-using System;
 using System.Drawing;
 namespace ZLogger.Scintilla.Public;
 
 /// <summary>
 /// Provides token-level foreground color overrides.
 /// Implement this interface to colorize specific tokens in log output.
-/// If a token is also matched by an <see cref="ILinkifier"/>, only the foreground
-/// color is overridden — the link hotspot and click action are preserved.
+/// A token matched by an <see cref="ILinkifier"/> is a link and keeps the link color;
+/// the colorizer is not asked about it.
 /// <para>
 /// <b>Thread safety:</b> Implementations <b>must</b> be thread-safe.
 /// <see cref="TryGetColor"/> may be called from a background thread.

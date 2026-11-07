@@ -1,4 +1,3 @@
-using System.Drawing;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Services;
@@ -25,10 +24,6 @@ internal static class StyleMapper
     private const int TokenLinkStyleId       = 24;
     private const int TokenClassifiedStyleId = 28;
 
-    public const int  TokenIndicatorStyleId  = 8;
-    public const int  LinkHotspotStyleId     = 16;
-    public const bool TokenIndicatorUnderText = true;
-    public static readonly Color TokenIndicatorColor = Color.FromArgb(80, 140, 220);
 
     private static readonly int[] SemanticLookup = BuildSemanticLookup();
 

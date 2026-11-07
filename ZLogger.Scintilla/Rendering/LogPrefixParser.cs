@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Rendering;
@@ -52,7 +50,7 @@ internal static class LogPrefixParser
             utf8Line[result.LevelByteStart + 2],
             fallbackLevel);
 
-        BuildPrefixSegmentsCore(result.TimestampLength, 3, levelStyle, segments);
+        BuildPrefixSegmentsCore(result.TimestampLength, levelStyle, segments);
 
         var remainder = utf8Line.Length - result.PrefixByteLength;
         if (remainder > 0)
@@ -61,14 +59,13 @@ internal static class LogPrefixParser
 
     private static void BuildPrefixSegmentsCore(
         int timestampByteLength,
-        int levelByteLength,
         SemanticStyle levelStyle,
         IList<RenderSegment> segments)
     {
         segments.Add(new RenderSegment(1, SemanticStyle.Punctuation));
         segments.Add(new RenderSegment(timestampByteLength, SemanticStyle.SecondaryText));
         segments.Add(new RenderSegment(1, SemanticStyle.SecondaryText));
-        segments.Add(new RenderSegment(levelByteLength, levelStyle));
+        segments.Add(new RenderSegment(3, levelStyle)); // "INF", "WRN" and the like
         segments.Add(new RenderSegment(2, SemanticStyle.Punctuation));
     }
 

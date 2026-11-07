@@ -1,28 +1,40 @@
-using ZLogger.Scintilla.Models;
-
+#if NET8_0_OR_GREATER
+using System.Buffers;
+using System.Text;
+#endif
 namespace ZLogger.Scintilla.Rendering;
 
 /// <summary>
-/// Shared character sets and classification helpers for the rendering pipeline.
+/// Byte classification for UTF-8 text. Every character tested here is ASCII,
+/// and no byte of a multi-byte character can equal an ASCII byte.
 /// </summary>
 internal static class RenderingChars
 {
-    public const string TokenSeparators = " \t\r\n,;:=()[]{}<>\"'|/\\";
+    private const string TokenSeparators = " \t\r\n,;:=()[]{}<>\"'|/\\";
 
-    public static bool IsTokenSeparator(char ch) => TokenSeparators.IndexOf(ch) >= 0;
+#if NET8_0_OR_GREATER
+    private static readonly SearchValues<byte> TokenSeparatorBytes =
+        SearchValues.Create(Encoding.ASCII.GetBytes(TokenSeparators));
+#endif
 
-    public static bool IsJsonPunctuation(char ch) => ch is '{' or '}' or '[' or ']' or ',' or ':';
+    public static bool IsTokenSeparator(byte value) => value < 0x80 && TokenSeparators.IndexOf((char)value) >= 0;
 
-    public static bool TryAppendWhitespace(string text, RenderTokenWriter writer, ref int index)
+    public static int IndexOfTokenSeparator(ReadOnlySpan<byte> text)
     {
-        if (!char.IsWhiteSpace(text[index]))
-            return false;
+#if NET8_0_OR_GREATER
+        return text.IndexOfAny(TokenSeparatorBytes);
+#else
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (IsTokenSeparator(text[i]))
+                return i;
+        }
 
-        var start = index;
-        while (index < text.Length && char.IsWhiteSpace(text[index]))
-            index++;
-
-        writer.Add(text, start, index - start, SemanticStyle.SecondaryText);
-        return true;
+        return -1;
+#endif
     }
+
+    public static bool IsAsciiLetter(byte value) => (uint)((value | 0x20) - 'a') <= 'z' - 'a';
+
+    public static bool IsAsciiDigit(byte value) => (uint)(value - '0') <= 9;
 }

@@ -1,14 +1,10 @@
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Services;
 namespace ZLogger.Scintilla.Pipeline;
 
 internal sealed class SearchCoordinator(
     ScintillaDocument document,
-    Action<Action> dispatch,
-    Func<Func<SearchMatch>, CancellationToken, Task<SearchMatch>> dispatchAsync)
+    Action<Action> dispatch)
 {
     private string _pattern = string.Empty;
     private bool _useRegex;
@@ -20,12 +16,6 @@ internal sealed class SearchCoordinator(
     {
         if (!UpdatePattern(pattern, useRegex))
             return;
-
-        if (IsEmpty)
-        {
-            dispatch(() => document.HighlightSearch(string.Empty, matchCase: false, useRegex: false));
-            return;
-        }
 
         dispatch(() => document.HighlightSearch(_pattern, matchCase: false, _useRegex));
     }
@@ -81,8 +71,8 @@ internal sealed class SearchCoordinator(
             return SearchPosition.NotFound;
 
         var result = forward
-            ? await dispatchAsync(() => document.FindNext(_pattern, matchCase: false, _useRegex), ct).ConfigureAwait(false)
-            : await dispatchAsync(() => document.FindPrevious(_pattern, matchCase: false, _useRegex), ct).ConfigureAwait(false);
+            ? await document.FindNextAsync(_pattern, matchCase: false, _useRegex, ct).ConfigureAwait(false)
+            : await document.FindPreviousAsync(_pattern, matchCase: false, _useRegex, ct).ConfigureAwait(false);
 
         return !result.Found
             ? SearchPosition.NotFound

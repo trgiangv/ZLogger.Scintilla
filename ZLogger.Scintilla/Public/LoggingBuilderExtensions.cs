@@ -1,4 +1,3 @@
-using System;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using ZLogger.Scintilla.Pipeline;
@@ -49,8 +48,13 @@ public static class LoggingBuilderExtensions
         builder.Services.TryAddSingleton(viewer);
         builder.Services.TryAddSingleton<ScintillaLogViewerBase>(viewer);
 
-        builder.AddZLoggerLogProcessor((_, _) =>
+        builder.AddZLoggerLogProcessor((zLoggerOptions, _) =>
         {
+            zLoggerOptions.IncludeScopes = viewer.IncludeScopes;
+
+            // By default ZLogger formats a template inside Log(), where a throwing ToString reaches the
+            // application's logging call. Deferred, it runs in the formatter, which handles the failure.
+            zLoggerOptions.IsFormatLogImmediatelyInStandardLog = false;
             var processor = new ScintillaLogProcessor(viewer.TryPost);
             viewer.AttachProcessor(processor);
             return processor;

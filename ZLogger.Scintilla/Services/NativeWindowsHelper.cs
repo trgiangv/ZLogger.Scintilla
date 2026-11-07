@@ -1,32 +1,32 @@
-using System;
 using System.Runtime.InteropServices;
 namespace ZLogger.Scintilla.Services;
-// ReSharper disable once InconsistentNaming
+
+// Partial for LibraryImport's generated half, which net48 does not have.
 // ReSharper disable once PartialTypeWithSinglePart
 internal static partial class NativeWindowsHelper
 {
-    private const string UXTHEME_DLL = "uxtheme.dll";
+    private const string UxThemeDll = "uxtheme.dll";
 
 #if NET8_0_OR_GREATER
-    [LibraryImport(UXTHEME_DLL, EntryPoint = "SetWindowTheme", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [LibraryImport(UxThemeDll, EntryPoint = "SetWindowTheme", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     private static partial int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
-    
-    [LibraryImport(UXTHEME_DLL, EntryPoint = "#135", SetLastError = true)]
+
+    [LibraryImport(UxThemeDll, EntryPoint = "#135", SetLastError = true)]
     private static partial int SetPreferredAppMode([MarshalAs(UnmanagedType.Bool)] bool mode);
-    
-    [LibraryImport(UXTHEME_DLL, EntryPoint = "#136", SetLastError = true)]
+
+    [LibraryImport(UxThemeDll, EntryPoint = "#136", SetLastError = true)]
     private static partial void FlushMenuThemes();
 #else
-    [DllImport(UXTHEME_DLL, CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport(UxThemeDll, CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
-    
-    [DllImport(UXTHEME_DLL, EntryPoint = "#135", SetLastError = true)]
+
+    [DllImport(UxThemeDll, EntryPoint = "#135", SetLastError = true)]
     private static extern int SetPreferredAppMode(bool mode);
 
-    [DllImport(UXTHEME_DLL, EntryPoint = "#136", SetLastError = true)]
+    [DllImport(UxThemeDll, EntryPoint = "#136", SetLastError = true)]
     private static extern void FlushMenuThemes();
 #endif
-    
+
     internal static void ApplyScrollbarTheme(IntPtr hwnd, bool isDark)
     {
         if (hwnd == IntPtr.Zero)
@@ -43,7 +43,8 @@ internal static partial class NativeWindowsHelper
         }
         catch (Exception)
         {
-            // ignored
+            // #135 and #136 are undocumented ordinals that older Windows builds lack. Menus then keep the
+            // system theme, which is only cosmetic.
         }
     }
 }

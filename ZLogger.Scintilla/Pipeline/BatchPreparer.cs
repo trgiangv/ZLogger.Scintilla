@@ -1,8 +1,4 @@
-using System;
 using System.Buffers;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Rendering;
 using ZLogger.Scintilla.Services;
@@ -12,199 +8,198 @@ namespace ZLogger.Scintilla.Pipeline;
 
 /// <summary>
 /// Prepares log entries into a <see cref="PreparedBatch"/> containing pre-assembled
-/// text bytes, style ranges, and token ranges. This class owns all scratch buffers
-/// and must only be called from a single thread at a time.
+/// text bytes, style ranges, and token ranges. Must only be called from a single thread at a time.
+/// An entry that fails to style is still shown, as plain text in its level's color.
 /// </summary>
-internal sealed class BatchPreparer(LogRenderer renderer, bool enableTokenLinks) : IDisposable
+internal sealed class BatchPreparer(LogRenderer renderer, Action<Exception>? errorSink = null)
 {
+    private const int InitialTextCapacity = 128 * 1024;
+
     private readonly List<RenderSegment> _segments = new(LogConstants.SegmentsCapacity);
     private readonly List<RenderSegment> _jsonSegments = new(LogConstants.SegmentsCapacity);
-    private readonly List<StyleRange> _styleRangeList = new(LogConstants.StyleRangesCapacity);
-    private readonly List<TokenRange> _tokenRangeList = new(LogConstants.TokenRangesCapacity);
-    private byte[] _scratchBuffer = ArrayPool<byte>.Shared.Rent(128 * 1024);
 
-    public PreparedBatch Prepare(
-        IReadOnlyList<LogEntry> entries,
-        long epoch,
-        List<LogEntry>? entriesToRelease)
+    // Rented for the batch being built and handed over with it, so no text or range is copied twice.
+    private byte[] _text = [];
+    private StyleRange[] _styles = [];
+    private TokenRange[] _tokens = [];
+    private int _written;
+    private int _styleCount;
+    private int _tokenCount;
+
+    private int _textCapacity = InitialTextCapacity;
+    private int _styleCapacity = LogConstants.StyleRangesCapacity;
+
+    public PreparedBatch Prepare(IReadOnlyList<LogEntry> entries, long epoch)
     {
-        _styleRangeList.Clear();
-        _tokenRangeList.Clear();
+        _text = ArrayPool<byte>.Shared.Rent(_textCapacity);
+        _styles = ArrayPool<StyleRange>.Shared.Rent(_styleCapacity);
+        _tokens = [];
+        _written = 0;
+        _styleCount = 0;
+        _tokenCount = 0;
         _segments.Clear();
 
-        var written = 0;
         for (var i = 0; i < entries.Count; i++)
-            written = PrepareEntry(entries[i], written);
+            PrepareEntry(entries[i]);
 
-        return SnapshotResult(written, epoch, entries.Count, entriesToRelease);
+        // Start the next batch at this size. Growing a rented array means copying it.
+        _textCapacity = Math.Max(InitialTextCapacity, Math.Min(_text.Length, LogConstants.MaxRetainedBatchBytes));
+        _styleCapacity = Math.Max(LogConstants.StyleRangesCapacity, _styles.Length);
+
+        var batch = new PreparedBatch(
+            new PooledSegment<byte>(_text, _written),
+            new PooledSegment<StyleRange>(_styles, _styleCount),
+            new PooledSegment<TokenRange>(_tokens, _tokenCount),
+            epoch, entries.Count);
+
+        _text = [];
+        _styles = [];
+        _tokens = [];
+        return batch;
     }
 
-    private int PrepareEntry(LogEntry entry, int written)
+
+    private void PrepareEntry(LogEntry entry)
     {
-        written = AppendMessageBytes(entry.Message, written);
+        var lineStart = _written;
+        AppendMessageBytes(entry.Message);
 
-        renderer.BuildSegments(entry, _segments);
-        var styleStartIndex = _styleRangeList.Count;
-        var lineTextOffset = written - entry.Message.Count;
-        AppendStyleRangesFromSegments(_segments, entry.Level, entry.Message.Count);
-
-        if (enableTokenLinks)
-            CollectTokenRangesFromStyles(styleStartIndex, lineTextOffset);
-
-        written = AppendNewLine(written);
-
-        if (renderer.IsPrettyJsonEnabled)
-            written = AppendJsonLines(entry, written);
-
-        return written;
-    }
-
-    private int AppendMessageBytes(ArraySegment<byte> message, int written)
-    {
-        var lineByteCount = message.Count;
-        EnsureScratchCapacity(written + lineByteCount + LogConstants.NewLineBytes.Length, written);
-
-        if (lineByteCount > 0 && message.Array is not null)
-            Buffer.BlockCopy(message.Array, message.Offset, _scratchBuffer, written, lineByteCount);
-
-        return written + lineByteCount;
-    }
-
-    private int AppendNewLine(int written)
-    {
-        Buffer.BlockCopy(LogConstants.NewLineBytes, 0, _scratchBuffer, written, LogConstants.NewLineBytes.Length);
-        _styleRangeList.Add(new StyleRange(LogConstants.NewLineBytes.Length, SemanticStyle.SecondaryText.ToStyleId(), null, false));
-        return written + LogConstants.NewLineBytes.Length;
-    }
-
-    private PreparedBatch SnapshotResult(
-        int written, long epoch, int entryCount, List<LogEntry>? entriesToRelease)
-    {
-        var textBuffer = ArrayPool<byte>.Shared.Rent(Math.Max(written, 1));
-        Buffer.BlockCopy(_scratchBuffer, 0, textBuffer, 0, written);
-
-        var styleRanges = ArrayPool<StyleRange>.Shared.Rent(Math.Max(_styleRangeList.Count, 1));
-        for (var i = 0; i < _styleRangeList.Count; i++)
-            styleRanges[i] = _styleRangeList[i];
-
-        var tokenRanges = _tokenRangeList.Count > 0
-            ? ArrayPool<TokenRange>.Shared.Rent(_tokenRangeList.Count)
-            : Array.Empty<TokenRange>();
-        for (var i = 0; i < _tokenRangeList.Count; i++)
-            tokenRanges[i] = _tokenRangeList[i];
-
-        ShrinkScratchIfNeeded();
-
-        return new PreparedBatch(
-            new PooledSegment<byte>(textBuffer, written),
-            new PooledSegment<StyleRange>(styleRanges, _styleRangeList.Count),
-            new PooledSegment<TokenRange>(tokenRanges, _tokenRangeList.Count),
-            epoch, entryCount, entriesToRelease);
-    }
-
-    private int AppendJsonLines(LogEntry entry, int written)
-    {
-        if (!entry.Properties.TryGetValue(LogConstants.JsonBytes, out var raw) || raw is not byte[] jsonBytes || jsonBytes.Length == 0)
-            return written;
-
-        var jsonText = Encoding.UTF8.GetString(jsonBytes);
-        var jsonUtf8Count = jsonBytes.Length;
-        var totalNeeded = jsonUtf8Count + LogConstants.NewLineBytes.Length;
-        EnsureScratchCapacity(written + totalNeeded, written);
-
-        Buffer.BlockCopy(jsonBytes, 0, _scratchBuffer, written, jsonUtf8Count);
-        written += jsonUtf8Count;
-
-        renderer.BuildJsonSegments(jsonText, _jsonSegments);
-        var jsonStyleStartIndex = _styleRangeList.Count;
-        var jsonTextOffset = written - jsonUtf8Count;
-        AppendStyleRangesFromSegments(_jsonSegments, entry.Level, jsonUtf8Count);
-
-        if (enableTokenLinks)
-            CollectTokenRangesFromStyles(jsonStyleStartIndex, jsonTextOffset);
-
-        Buffer.BlockCopy(LogConstants.NewLineBytes, 0, _scratchBuffer, written, LogConstants.NewLineBytes.Length);
-        written += LogConstants.NewLineBytes.Length;
-        _styleRangeList.Add(new StyleRange(LogConstants.NewLineBytes.Length, SemanticStyle.SecondaryText.ToStyleId(), null, false));
-
-        return written;
-    }
-
-    public void Dispose()
-    {
-        if (_scratchBuffer.Length <= 0) return;
-        ArrayPool<byte>.Shared.Return(_scratchBuffer);
-        _scratchBuffer = [];
-    }
-
-    private void AppendStyleRangesFromSegments(
-        IReadOnlyList<RenderSegment> segments,
-        Microsoft.Extensions.Logging.LogLevel level,
-        int expectedLineBytes)
-    {
-        if (segments.Count == 0)
+        var styleStart = _styleCount;
+        var tokenStart = _tokenCount;
+        try
         {
-            _styleRangeList.Add(new StyleRange(expectedLineBytes, level.ToStyleId(), null, false));
-            return;
+            renderer.BuildSegments(entry, _segments);
+            AppendStyleRanges(_segments, entry.Level, entry.Message.Count, lineStart);
+        }
+        catch (Exception ex)
+        {
+            _styleCount = styleStart;
+            _tokenCount = tokenStart;
+            AddStyle(new StyleRange(entry.Message.Count, entry.Level.ToStyleId(), null, false));
+            Report(ex);
         }
 
+        AppendNewLine();
+
+        if (renderer.IsPrettyJsonEnabled)
+            AppendJsonLines(entry);
+    }
+
+    private void AppendMessageBytes(ArraySegment<byte> message)
+    {
+        EnsureTextCapacity(_written + message.Count + LogConstants.NewLineBytes.Length);
+        if (message is { Count: > 0, Array: not null })
+            Buffer.BlockCopy(message.Array, message.Offset, _text, _written, message.Count);
+        _written += message.Count;
+    }
+
+    private void AppendNewLine()
+    {
+        var newLine = LogConstants.NewLineBytes;
+        for (var i = 0; i < newLine.Length; i++)
+            _text[_written + i] = newLine[i];
+        _written += newLine.Length;
+        AddStyle(new StyleRange(newLine.Length, SemanticStyle.SecondaryText.ToStyleId(), null, false));
+    }
+
+    private void AppendJsonLines(LogEntry entry)
+    {
+        var writtenBefore = _written;
+        var styleStart = _styleCount;
+        var tokenStart = _tokenCount;
+        try
+        {
+            if (entry.GetJsonBytes() is not { Length: > 0 } jsonBytes)
+                return;
+
+            EnsureTextCapacity(_written + jsonBytes.Length + LogConstants.NewLineBytes.Length);
+            Buffer.BlockCopy(jsonBytes, 0, _text, _written, jsonBytes.Length);
+            _written += jsonBytes.Length;
+
+            renderer.BuildJsonSegments(jsonBytes, _jsonSegments);
+            AppendStyleRanges(_jsonSegments, entry.Level, jsonBytes.Length, writtenBefore);
+
+            AppendNewLine();
+        }
+        catch (Exception ex)
+        {
+            _written = writtenBefore;
+            _styleCount = styleStart;
+            _tokenCount = tokenStart;
+            Report(ex);
+        }
+    }
+
+    private void AppendStyleRanges(
+        List<RenderSegment> segments,
+        Microsoft.Extensions.Logging.LogLevel level,
+        int expectedLineBytes,
+        int lineOffset)
+    {
         var total = 0;
         for (var i = 0; i < segments.Count; i++)
             total += segments[i].Utf8Length;
 
-        Debug.Assert(total == expectedLineBytes,
-            $"Segment UTF-8 sum ({total}) != expected ({expectedLineBytes}). Falling back to single-style line.");
+        // Fewer or more styled bytes than text would shift the style of every later line.
         if (total != expectedLineBytes)
         {
-            _styleRangeList.Add(new StyleRange(expectedLineBytes, level.ToStyleId(), null, false));
+            AddStyle(new StyleRange(expectedLineBytes, level.ToStyleId(), null, false));
             return;
         }
 
+        var cursor = lineOffset;
         for (var i = 0; i < segments.Count; i++)
         {
             var segment = segments[i];
-            if (segment.Utf8Length <= 0) continue;
-            _styleRangeList.Add(new StyleRange(
-                segment.Utf8Length,
-                segment.SemanticStyle.ToStyleId(),
-                segment.TokenPayload,
-                segment.IsLink));
+            if (segment.Utf8Length <= 0)
+                continue;
+
+            AddStyle(new StyleRange(segment.Utf8Length, segment.SemanticStyle.ToStyleId(), segment.TokenPayload, segment.IsLink));
+            if (segment is { IsLink: true, TokenPayload: { } payload })
+                AddToken(new TokenRange(cursor, segment.Utf8Length, payload));
+            cursor += segment.Utf8Length;
         }
     }
 
-    private void CollectTokenRangesFromStyles(int styleStartIndex, int lineTextOffset)
+    private void AddStyle(in StyleRange range)
     {
-        var cursor = lineTextOffset;
-        for (var i = styleStartIndex; i < _styleRangeList.Count; i++)
+        if (_styleCount == _styles.Length)
+            Grow(ref _styles, _styleCount, _styleCount * 2);
+        _styles[_styleCount++] = range;
+    }
+
+    private void AddToken(in TokenRange range)
+    {
+        if (_tokenCount == _tokens.Length)
+            Grow(ref _tokens, _tokenCount, Math.Max(LogConstants.TokenRangesCapacity, _tokenCount * 2));
+        _tokens[_tokenCount++] = range;
+    }
+
+    private void EnsureTextCapacity(int required)
+    {
+        if (required <= _text.Length)
+            return;
+
+        Grow(ref _text, _written, Math.Max(required, _text.Length * 2));
+    }
+
+    private static void Grow<T>(ref T[] array, int used, int minimumLength)
+    {
+        var grown = ArrayPool<T>.Shared.Rent(minimumLength);
+        Array.Copy(array, grown, used);
+        new PooledSegment<T>(array, used).Return();
+        array = grown;
+    }
+
+    private void Report(Exception ex)
+    {
+        try
         {
-            var range = _styleRangeList[i];
-            if (range is { TokenPayload: { } tp, IsLink: true })
-                _tokenRangeList.Add(new TokenRange(cursor, range.Length, tp));
-            cursor += range.Length;
+            errorSink?.Invoke(ex);
         }
-    }
-
-    private void EnsureScratchCapacity(int requiredSize, int bytesUsed)
-    {
-        if (requiredSize <= _scratchBuffer.Length)
-            return;
-
-        var newSize = _scratchBuffer.Length;
-        while (newSize < requiredSize)
-            newSize *= 2;
-
-        var newBuffer = ArrayPool<byte>.Shared.Rent(newSize);
-        Buffer.BlockCopy(_scratchBuffer, 0, newBuffer, 0, bytesUsed);
-        ArrayPool<byte>.Shared.Return(_scratchBuffer);
-        _scratchBuffer = newBuffer;
-    }
-
-    private void ShrinkScratchIfNeeded(int maxRetainedSize = 256 * 1024, int resetSize = 128 * 1024)
-    {
-        if (_scratchBuffer.Length <= maxRetainedSize)
-            return;
-
-        ArrayPool<byte>.Shared.Return(_scratchBuffer);
-        _scratchBuffer = ArrayPool<byte>.Shared.Rent(resetSize);
+        catch
+        {
+            // A broken sink must not stop the pipeline it reports on.
+        }
     }
 }

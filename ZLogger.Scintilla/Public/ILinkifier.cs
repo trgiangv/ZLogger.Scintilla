@@ -1,4 +1,3 @@
-using System;
 using ZLogger.Scintilla.Models;
 namespace ZLogger.Scintilla.Public;
 

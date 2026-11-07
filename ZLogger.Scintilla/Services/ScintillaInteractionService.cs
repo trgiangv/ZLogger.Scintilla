@@ -1,62 +1,40 @@
-using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Windows.Forms;
-using CommunityToolkit.HighPerformance.Buffers;
 using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 // ReSharper disable RedundantCast
 namespace ZLogger.Scintilla.Services;
 
-internal sealed class ScintillaInteractionService(ScintillaNET.Scintilla scintilla, ScintillaOptions options, List<TokenRange> tokenRanges)
+internal sealed class ScintillaInteractionService(LogScintillaControl scintilla, ScintillaOptions options, List<TokenRange> tokenRanges)
 {
     private bool _isHoveringLink;
 
-    public void HandleDoubleClick()
-    {
-        if (!options.EnableTokenLinks)
-            return;
-
-        var position = (int)scintilla.DirectMessage(LogConstants.SciGetCurrentPos, IntPtr.Zero, IntPtr.Zero);
-        if (TryGetTokenRangeAt(position, out var mapped))
-        {
-            InvokeTokenClick(mapped.Payload);
-            return;
-        }
-
-        // Fallback: try to match selected text against linkifiers
-        var selected = scintilla.SelectedText;
-        if (string.IsNullOrWhiteSpace(selected))
-            return;
-
-        var maxBytes = Encoding.UTF8.GetMaxByteCount(selected.Length);
-        using var owner = SpanOwner<byte>.Allocate(maxBytes);
-#if NET6_0_OR_GREATER
-        var written = Encoding.UTF8.GetBytes(selected.AsSpan(), owner.Span);
-#else
-        var written = Encoding.UTF8.GetBytes(selected, 0, selected.Length, owner.DangerousGetArray().Array!, owner.DangerousGetArray().Offset);
-#endif
-        var utf8 = owner.Span[..written];
-        if (options.Linkifier is null) return;
-        if (!options.Linkifier.TryMatch(utf8, RenderContext.Empty, out var onClick) || onClick is null) return;
-        InvokeAction(onClick);
-    }
-
+    /// <summary>
+    /// A link opens on a plain single click. The up of a double click would open it a second time,
+    /// and a drag that selects text and happens to end on a link is not a click at all.
+    /// </summary>
     public void HandleMouseUp(MouseEventArgs e)
     {
-        if (e.Button != MouseButtons.Left || !options.EnableTokenLinks)
+        if (e.Button != MouseButtons.Left || scintilla.IsInDoubleClick)
             return;
+        if (scintilla.DirectMessage(LogConstants.SciGetSelectionEmpty, IntPtr.Zero, IntPtr.Zero) == IntPtr.Zero)
+            return;
+
         var position = (int)scintilla.DirectMessage(LogConstants.SciPositionFromPointClose, (IntPtr)e.X, (IntPtr)e.Y);
         if (position < 0 || !TryGetTokenRangeAt(position, out var tokenRange))
             return;
 
-        InvokeTokenClick(tokenRange.Payload);
+        try
+        {
+            tokenRange.Payload.InvokeClick();
+        }
+        catch (Exception ex)
+        {
+            options.EnrichmentErrorSink?.Invoke(ex);
+        }
     }
 
     public void HandleMouseMove(MouseEventArgs e)
     {
-        if (!options.EnableTokenLinks)
-            return;
         var position = (int)scintilla.DirectMessage(LogConstants.SciPositionFromPointClose, (IntPtr)e.X, (IntPtr)e.Y);
         var isOnLink = position >= 0 && TryGetTokenRangeAt(position, out _);
         if (isOnLink == _isHoveringLink)
@@ -111,23 +89,5 @@ internal sealed class ScintillaInteractionService(ScintillaNET.Scintilla scintil
 
         tokenRange = default;
         return false;
-    }
-
-    private void InvokeTokenClick(TokenPayload payload)
-    {
-        if (payload.IsLink)
-            InvokeAction(payload.InvokeClick);
-    }
-
-    private void InvokeAction(Action action)
-    {
-        try
-        {
-            action();
-        }
-        catch (Exception ex)
-        {
-            options.EnrichmentErrorSink?.Invoke(ex);
-        }
     }
 }

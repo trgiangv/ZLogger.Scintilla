@@ -1,14 +1,10 @@
-using System;
 using System.Buffers;
-using System.Collections.Generic;
 using ZLogger.Scintilla.Models;
-using ZLogger.Scintilla.Public;
 // ReSharper disable RedundantCast
 namespace ZLogger.Scintilla.Services;
 
 internal sealed class ScintillaStyleService(
     ScintillaNET.Scintilla scintilla, 
-    ScintillaOptions options, 
     List<TokenRange> tokenRanges, 
     Dictionary<int, int> linkStyleByBaseStyleId)
 {
@@ -42,14 +38,10 @@ internal sealed class ScintillaStyleService(
 
         ApplyStyleBuffer(byteStartPos, writtenLength);
 
-        scintilla.DirectMessage(LogConstants.SciIndicatorClearRange, (IntPtr)byteStartPos, (IntPtr)writtenLength);
-        scintilla.IndicatorCurrent = StyleMapper.TokenIndicatorStyleId;
-
         for (var i = 0; i < tokenRangeCount; i++)
         {
             var tr = tokenRangesArray[i];
-            if (options.EnableTokenLinks && tr.Payload is { } tp)
-                tokenRanges.Add(new TokenRange(byteStartPos + tr.Start, tr.Length, tp));
+            tokenRanges.Add(new TokenRange(byteStartPos + tr.Start, tr.Length, tr.Payload));
         }
     }
 
@@ -100,15 +92,10 @@ internal sealed class ScintillaStyleService(
         if (linkStyleByBaseStyleId.TryGetValue(baseStyleId, out var resolved))
             return resolved;
 
-        var candidateStyleId = baseStyleId + LogConstants.LinkStyleOffset;
-        if (candidateStyleId is <= 0 or >= 255)
-            candidateStyleId = StyleMapper.LinkHotspotStyleId;
-
-        if (candidateStyleId != StyleMapper.LinkHotspotStyleId)
-            CopyBaseStyleToLinkStyle(baseStyleId, candidateStyleId);
-
-        linkStyleByBaseStyleId[baseStyleId] = candidateStyleId;
-        return candidateStyleId;
+        var linkStyleId = baseStyleId + LogConstants.LinkStyleOffset;
+        CopyBaseStyleToLinkStyle(baseStyleId, linkStyleId);
+        linkStyleByBaseStyleId[baseStyleId] = linkStyleId;
+        return linkStyleId;
     }
 
     private void CopyBaseStyleToLinkStyle(int baseStyleId, int linkStyleId)

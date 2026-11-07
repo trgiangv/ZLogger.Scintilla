@@ -1,185 +1,135 @@
-using System;
-using System.Collections.Generic;
 using ZLogger.Scintilla.Models;
-// ReSharper disable LoopCanBeConvertedToQuery
 namespace ZLogger.Scintilla.Rendering;
 
 /// <summary>
-/// Applies JSON syntax highlighting to already-formatted JSON text.
+/// Applies JSON syntax highlighting to already-formatted UTF-8 JSON.
 /// Does NOT perform serialization or pretty-printing — those are handled
 /// by <see cref="Pipeline.ScintillaLogProcessor"/> via LookupEngine decomposition.
 /// </summary>
 internal sealed class JsonSyntaxHighlighter
 {
-    private readonly List<(int Start, int Length)> _urlMatchBuffer = new(LogConstants.UrlMatchBufferCapacity);
+    private readonly List<(int Start, int Length)> _urls = new(LogConstants.UrlMatchBufferCapacity);
 
-    public void AppendJsonStyledSegments(string text, IList<RenderSegment> segments)
+    public void AppendJsonStyledSegments(ReadOnlySpan<byte> text, IList<RenderSegment> segments)
     {
-        var writer = new RenderTokenWriter(segments);
         var index = 0;
         while (index < text.Length)
-        {
-            if (RenderingChars.TryAppendWhitespace(text, writer, ref index) ||
-                TryAppendJsonPunctuation(text, writer, ref index) ||
-                TryAppendJsonQuotedString(text, writer, ref index) ||
-                TryAppendJsonNumber(text, writer, ref index) ||
-                TryAppendJsonKeyword(text, writer, ref index))
-            {
-                continue;
-            }
-
-            writer.Add(text, index, 1, SemanticStyle.Text);
-            index++;
-        }
+            index = AppendToken(text, index, segments);
     }
 
-    private static bool TryAppendJsonPunctuation(string text, RenderTokenWriter writer, ref int index)
+    private int AppendToken(ReadOnlySpan<byte> text, int index, IList<RenderSegment> segments)
     {
-        if (!RenderingChars.IsJsonPunctuation(text[index]))
-            return false;
+        var value = text[index];
+        if (IsWhitespace(value))
+            return AppendRun(text, index, IsWhitespace, SemanticStyle.SecondaryText, segments);
+        if (value is (byte)'{' or (byte)'}' or (byte)'[' or (byte)']' or (byte)',' or (byte)':')
+            return AppendOne(index, SemanticStyle.Punctuation, segments);
+        if (value == (byte)'"')
+            return AppendQuoted(text, index, segments);
+        if (RenderingChars.IsAsciiDigit(value) || value == (byte)'-')
+            return AppendRun(text, index, IsNumberByte, SemanticStyle.JsonNumber, segments);
 
-        writer.Add(text, index, 1, SemanticStyle.Punctuation);
-        index++;
-        return true;
+        return AppendKeyword(text, index, segments);
     }
 
-    private bool TryAppendJsonQuotedString(string text, RenderTokenWriter writer, ref int index)
+    private static int AppendKeyword(ReadOnlySpan<byte> text, int index, IList<RenderSegment> segments)
     {
-        if (text[index] != '"')
-            return false;
+        var rest = text[index..];
+        if (rest.StartsWith("true"u8))
+            return AppendKeyword(index, 4, SemanticStyle.JsonBoolean, segments);
+        if (rest.StartsWith("false"u8))
+            return AppendKeyword(index, 5, SemanticStyle.JsonBoolean, segments);
+        if (rest.StartsWith("null"u8))
+            return AppendKeyword(index, 4, SemanticStyle.JsonNull, segments);
 
-        var start = index;
-        index = FindQuotedStringEnd(text, index);
-        var tokenLength = index - start;
-        var style = IsJsonKeyString(text, index) ? SemanticStyle.JsonKey : SemanticStyle.JsonString;
+        return AppendOne(index, SemanticStyle.Text, segments);
+    }
 
-        if (style == SemanticStyle.JsonString)
-            AppendJsonStringWithLinks(text, start, tokenLength, writer);
+    private static int AppendKeyword(int index, int length, SemanticStyle style, IList<RenderSegment> segments)
+    {
+        segments.Add(new RenderSegment(length, style));
+        return index + length;
+    }
+
+    private static int AppendOne(int index, SemanticStyle style, IList<RenderSegment> segments)
+    {
+        segments.Add(new RenderSegment(1, style));
+        return index + 1;
+    }
+
+    private delegate bool BytePredicate(byte value);
+
+    private static int AppendRun(ReadOnlySpan<byte> text, int index, BytePredicate belongs, SemanticStyle style, IList<RenderSegment> segments)
+    {
+        var end = index + 1;
+        while (end < text.Length && belongs(text[end]))
+            end++;
+
+        segments.Add(new RenderSegment(end - index, style));
+        return end;
+    }
+
+    private int AppendQuoted(ReadOnlySpan<byte> text, int start, IList<RenderSegment> segments)
+    {
+        var end = FindQuotedEnd(text, start);
+        if (IsFollowedByColon(text, end))
+            segments.Add(new RenderSegment(end - start, SemanticStyle.JsonKey));
         else
-            writer.Add(text, start, tokenLength, style);
-
-        return true;
+            AppendStringWithLinks(text.Slice(start, end - start), segments);
+        return end;
     }
 
-    private static bool TryAppendJsonNumber(string text, RenderTokenWriter writer, ref int index)
+    private void AppendStringWithLinks(ReadOnlySpan<byte> quoted, IList<RenderSegment> segments)
     {
-        var ch = text[index];
-        if (!char.IsDigit(ch) && ch != '-')
-            return false;
+        UrlScanner.FindAll(quoted, _urls);
 
-        var start = index++;
-        while (index < text.Length && (char.IsDigit(text[index]) || text[index] is '.' or 'e' or 'E' or '+' or '-'))
-            index++;
-
-        writer.Add(text, start, index - start, SemanticStyle.JsonNumber);
-        return true;
-    }
-
-    private static bool TryAppendJsonKeyword(string text, RenderTokenWriter writer, ref int index)
-    {
-        if (MatchesWordAt(text, index, "true") || MatchesWordAt(text, index, "false"))
-        {
-            var length = text[index] == 't' ? 4 : 5;
-            writer.Add(text, index, length, SemanticStyle.JsonBoolean);
-            index += length;
-            return true;
-        }
-
-        if (MatchesWordAt(text, index, "null"))
-        {
-            writer.Add("null", SemanticStyle.JsonNull);
-            index += 4;
-            return true;
-        }
-
-        return false;
-    }
-
-    private void AppendJsonStringWithLinks(string source, int start, int length, RenderTokenWriter writer)
-    {
-        if (length <= 2)
-        {
-            writer.Add(source, start, length, SemanticStyle.JsonString);
-            return;
-        }
-
-        var contentStart = start + 1;
-        var contentLength = length - 2;
-        var contentSpan = source.AsSpan(contentStart, contentLength);
-        if (!UrlScanner.HasPotentialCandidate(contentSpan) ||
-            UrlScanner.FindAll(contentSpan, _urlMatchBuffer) == 0)
-        {
-            writer.Add(source, start, length, SemanticStyle.JsonString);
-            return;
-        }
-
-        writer.Add(source, start, 1, SemanticStyle.JsonString);
-        EmitUrlAwareSlice(source, contentStart, contentLength, writer);
-        writer.Add(source, start + length - 1, 1, SemanticStyle.JsonString);
-    }
-
-    private void EmitUrlAwareSlice(string source, int sliceStart, int sliceLength, RenderTokenWriter writer)
-    {
         var cursor = 0;
-        foreach (var (matchStart, matchLength) in _urlMatchBuffer)
+        foreach (var (start, length) in _urls)
         {
-            if (matchStart > cursor)
-                writer.Add(source, sliceStart + cursor, matchStart - cursor, SemanticStyle.JsonString);
+            if (!UrlScanner.TryCreateLink(quoted.Slice(start, length), out var link))
+                continue;
 
-            UrlScanner.EmitUrlOrFallback(source, sliceStart + matchStart, matchLength, SemanticStyle.JsonString, writer, preserveStyle: true);
-            cursor = matchStart + matchLength;
+            if (start > cursor)
+                segments.Add(new RenderSegment(start - cursor, SemanticStyle.JsonString));
+            segments.Add(new RenderSegment(length, SemanticStyle.JsonString, link, isLink: true));
+            cursor = start + length;
         }
 
-        if (cursor < sliceLength)
-            writer.Add(source, sliceStart + cursor, sliceLength - cursor, SemanticStyle.JsonString);
+        if (cursor < quoted.Length)
+            segments.Add(new RenderSegment(quoted.Length - cursor, SemanticStyle.JsonString));
     }
 
-    private static int FindQuotedStringEnd(string text, int startIndex)
+    private static int FindQuotedEnd(ReadOnlySpan<byte> text, int start)
     {
-        var index = startIndex + 1;
-        var escaped = false;
+        var index = start + 1;
         while (index < text.Length)
         {
             var current = text[index++];
-            if (escaped)
+            switch (current)
             {
-                escaped = false;
-                continue;
+                case (byte)'\\':
+                    index++;
+                    break;
+                case (byte)'"':
+                    return index;
             }
-
-            if (current == '\\')
-            {
-                escaped = true;
-                continue;
-            }
-
-            if (current == '"')
-                break;
         }
 
-        return index;
+        return text.Length;
     }
 
-    private static bool IsJsonKeyString(string text, int tokenEnd)
+    private static bool IsFollowedByColon(ReadOnlySpan<byte> text, int end)
     {
-        var lookAhead = tokenEnd;
-        while (lookAhead < text.Length && char.IsWhiteSpace(text[lookAhead]))
-            lookAhead++;
+        var index = end;
+        while (index < text.Length && IsWhitespace(text[index]))
+            index++;
 
-        return lookAhead < text.Length && text[lookAhead] == ':';
+        return index < text.Length && text[index] == (byte)':';
     }
 
-    private static bool MatchesWordAt(string text, int start, string word)
-    {
-        if (start < 0 || start + word.Length > text.Length)
-            return false;
+    private static bool IsWhitespace(byte value) =>
+        value is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n';
 
-        for (var i = 0; i < word.Length; i++)
-        {
-            if (text[start + i] != word[i])
-                return false;
-        }
-
-        return true;
-    }
+    private static bool IsNumberByte(byte value) =>
+        RenderingChars.IsAsciiDigit(value) || value is (byte)'.' or (byte)'e' or (byte)'E' or (byte)'+' or (byte)'-';
 }
