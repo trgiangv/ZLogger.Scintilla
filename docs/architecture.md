@@ -399,17 +399,17 @@ flowchart LR
     end
 
     subgraph Output["NuGet Package"]
-        Merged["ZLogger.Scintilla.dll<br/>(single assembly)"]
+        Assembly["ZLogger.Scintilla.dll<br/>(single assembly)"]
     end
 
     Main --> Compile
     LE --> Compile
     LEA --> Compile
-    Compile --> Merged
+    Compile --> Assembly
 ```
 
 - **LookupEngine** is a git submodule at `external/LookupEngine` — provides object decomposition for pretty JSON
-- Its source files compile directly into `ZLogger.Scintilla.dll`, so Debug and Release builds are the same shape. Merging separately built assemblies would add a GUID-renamed copy of Polyfill per assembly
+- Its source files compile directly into `ZLogger.Scintilla.dll`
 - `JetBrains.Annotations` is compile-time only: its attributes are `[Conditional]`, so the assembly neither references nor embeds them
 - The NuGet package ships a **single assembly** with no external LookupEngine dependency
 - LookupEngine's public types remain public

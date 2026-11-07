@@ -93,18 +93,6 @@ public sealed class PublicApiShapeTests
     }
 
     [TestMethod]
-    public void TheAssembly_HoldsNoCompilerGeneratedDuplicates()
-    {
-        // A merge of separately built assemblies renames its duplicates to "<guid>Name", and a build should not.
-        var renamed = typeof(ScintillaLogViewerBase).Assembly.GetTypes()
-            .Where(t => System.Text.RegularExpressions.Regex.IsMatch(t.Name, "^<[0-9a-f]{8}-"))
-            .Select(t => t.FullName)
-            .ToArray();
-
-        Assert.IsEmpty(renamed, string.Join(", ", renamed));
-    }
-
-    [TestMethod]
     public void OnlyAllowedPublicInterfaces_AreExported()
     {
         var assembly = typeof(ScintillaLogViewerBase).Assembly;

@@ -52,8 +52,8 @@
         <Compile Remove="$(NuGetPackageRoot)polyfill\*\contentFiles\cs\*\ArrayBufferWriter.cs"/>
     </ItemGroup>
 
-    <!-- LookupEngine is compiled in as source: merging its built assemblies would add a GUID-renamed copy of
-         Polyfill per assembly. Its JetBrains attributes are [Conditional], so they are compile-time only. -->
+    <!-- LookupEngine compiles into this assembly as source. Its JetBrains attributes are [Conditional],
+         so they are compile-time only. -->
     <ItemGroup>
         <Compile Include="..\external\LookupEngine\source\LookupEngine\**\*.cs;..\external\LookupEngine\source\LookupEngine.Abstractions\**\*.cs"
                  Exclude="..\external\LookupEngine\source\*\bin\**;..\external\LookupEngine\source\*\obj\**"

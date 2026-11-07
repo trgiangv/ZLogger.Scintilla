@@ -74,7 +74,7 @@ Counts include data rows.
 | `MemoryProbe` | 1 | Prints memory at each step around `Clear()`, and asserts that a full GC reclaims it |
 | `ParameterSpanTests` | 24 | `IsLeafType`, `HasParameter` type-based lookup |
 | `PipelineCorrectnessTests` | 29 | What may be deferred, drop accounting, local time, format specifiers, throwing `ToString`, a `ToString` that logs, custom serializers, JSON text, URL schemes, pooled array clearing |
-| `PublicApiShapeTests` | 9 | Exact public member set of `ScintillaLogViewerBase` + 3 interfaces, and no GUID-renamed types |
+| `PublicApiShapeTests` | 8 | Exact public member set of `ScintillaLogViewerBase` + 3 interfaces |
 | `RenderFormattingTests` | 10 | `JsonSyntaxHighlighter` styling (keys, numbers, booleans, null, punctuation) |
 | `SolutionStructureTests` | 4 | File/folder organization, required docs, minimum file count |
 | `UrlClickTests` | 18 | URL detection in UTF-8 text, safe schemes, links in messages and JSON |
