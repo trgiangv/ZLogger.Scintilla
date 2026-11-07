@@ -85,6 +85,35 @@ public sealed class FindBarTests
         StringAssert.Contains(line, "needle 150");
     }
 
+    /// <summary>
+    /// A selection would lay its color over the current-match mark, gray while the find bar has the focus,
+    /// so finding moves the caret instead, and the next find starts from wherever the user left it.
+    /// </summary>
+    [TestMethod]
+    public void FindNext_MovesTheCaretWithoutSelecting()
+    {
+        using var live = new LiveViewer();
+        for (var i = 0; i < 3; i++)
+            live.Logger.LogInformation("line {I} needle", i);
+        live.WaitForLine("line 2 needle");
+        live.Viewer.HighlightSearch("needle");
+
+        var first = live.Viewer.FindNext();
+        var (start, end, word) = live.Ui(() => (
+            (int)live.Control.DirectMessage(LogConstants.SciGetSelectionStart),
+            (int)live.Control.DirectMessage(LogConstants.SciGetSelectionEnd),
+            live.Control.GetTextRange(live.Control.CurrentPosition, 6)));
+        Assert.AreEqual(1, first.Current);
+        Assert.AreEqual(start, end, "Finding selected the match.");
+        Assert.AreEqual("needle", word, "The caret is not at the start of the match.");
+
+        Assert.AreEqual(2, live.Viewer.FindNext().Current, "The next find did not continue after the current match.");
+
+        live.Ui(() => live.Control.DirectMessage(LogConstants.SciGotoPos, IntPtr.Zero));
+        Assert.AreEqual(1, live.Viewer.FindNext().Current, "The next find ignored where the user put the caret.");
+        Assert.AreEqual(3, live.Viewer.FindPrevious().Current, "Find previous did not wrap from the first match.");
+    }
+
     [TestMethod]
     public async Task SearchOptions_MatchCaseWholeWordAndRegex()
     {

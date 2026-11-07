@@ -92,13 +92,13 @@ internal sealed class SearchCoordinator(
         return document.SetSearchScope(enabled);
     }
 
-    /// <summary>Where the selected match ranks now, with the total from the last count. Must be called on the UI thread.</summary>
+    /// <summary>Where the current match ranks now, with the total from the last count. Must be called on the UI thread.</summary>
     public SearchPosition CurrentPosition(int total)
     {
         _totalMatches = total;
         return IsEmpty
             ? SearchPosition.NotFound
-            : new SearchPosition { Current = document.RankOfSelection(), Total = total };
+            : new SearchPosition { Current = document.RankOfCurrentMatch(), Total = total };
     }
 
     private bool UpdatePattern(string? pattern, SearchOptions options)

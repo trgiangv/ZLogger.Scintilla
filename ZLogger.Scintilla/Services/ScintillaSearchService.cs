@@ -31,6 +31,10 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
     private int _scopeStart;
     private int _scopeEnd;
 
+    // The match FindNext or FindPrevious moved to, in live byte positions; -1 when there is none.
+    private int _currentStart = -1;
+    private int _currentEnd = -1;
+
     public bool HasActiveSearch { get; private set; }
 
     /// <summary>Raised when the document is replaced, which also ends a find in selection.</summary>
@@ -44,13 +48,12 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
             return SearchMatch.NotFound;
 
         ApplySearchFlags();
-        var from = Clamp((int)Send(LogConstants.SciGetSelectionEnd), lo, hi);
+        // After the current match while the caret is still on it; from the caret once the user moved it.
+        var caret = (int)Send(LogConstants.SciGetCurrentPos);
+        var from = Clamp(caret == _currentStart ? _currentEnd : caret, lo, hi);
         var found = FindForward(from, hi);
         if (found.Start < 0 && from > lo)
             found = FindForward(lo, from);
-
-        if (found.Start >= 0)
-            Send(LogConstants.SciSetSel, found.Start, found.End);
 
         return FinalizeFind(found);
     }
@@ -63,25 +66,29 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
             return SearchMatch.NotFound;
 
         ApplySearchFlags();
-        var from = Clamp((int)Send(LogConstants.SciGetSelectionStart), lo, hi);
+        var from = Clamp((int)Send(LogConstants.SciGetCurrentPos), lo, hi);
 
         // A target that runs backwards makes Scintilla return the last match in the range.
         var found = FindOnce(from, lo);
         if (found.Start < 0 && from < hi)
             found = FindOnce(hi, from);
 
-        if (found.Start >= 0)
-            Send(LogConstants.SciSetSel, found.End, found.Start);
-
         return FinalizeFind(found);
     }
 
+    /// <summary>
+    /// Moves the caret to the match and marks it, without selecting it: a selection would lay its own color over
+    /// the mark, gray while the find bar has the focus, and would replace a range the user selected.
+    /// </summary>
     private SearchMatch FinalizeFind((int Start, int End) found)
     {
-        // The selection alone hardly shows while the find bar has the focus, so the match gets its own mark.
         ClearCurrentMatch();
         if (found.Start >= 0)
         {
+            _currentStart = found.Start;
+            _currentEnd = found.End;
+            Send(LogConstants.SciGotoPos, found.Start);
+            Send(LogConstants.SciScrollRange, found.End, found.Start);
             Send(LogConstants.SciSetIndicatorCurrent, LogConstants.CurrentMatchIndicatorId);
             Send(LogConstants.SciIndicatorFillRange, found.Start, found.End - found.Start);
         }
@@ -167,23 +174,23 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
     }
 
     /// <summary>
-    /// The 1-based rank of the match that is selected now, or 0 when the selection is not a match. Lets a count
-    /// that changes as logs arrive and leave keep the position it shows next to it right.
+    /// The 1-based rank of the current match, or 0 when there is none or the user moved the caret off it. Lets a
+    /// count that changes as logs arrive and leave keep the position it shows next to it right.
     /// </summary>
-    public int RankOfSelection()
+    public int RankOfCurrentMatch()
     {
-        if (!HasActiveSearch || _patternInvalid)
+        if (!HasActiveSearch || _patternInvalid || _currentStart < 0)
+            return 0;
+        if (Send(LogConstants.SciGetCurrentPos) != _currentStart)
             return 0;
 
-        var start = (int)Send(LogConstants.SciGetSelectionStart);
-        var end = (int)Send(LogConstants.SciGetSelectionEnd);
         var (lo, hi) = SearchBounds();
-        if (end <= start || start < lo || end > hi)
+        if (_currentStart < lo || _currentEnd > hi)
             return 0;
 
-        var rank = RankOf(start);
+        var rank = RankOf(_currentStart);
         var index = _firstLiveMatch + rank - 1;
-        return index < _matchIndex.Count && _matchIndex[index] == start + _trimmedBytes ? rank : 0;
+        return index < _matchIndex.Count && _matchIndex[index] == _currentStart + _trimmedBytes ? rank : 0;
     }
 
     /// <summary>The start of the document was deleted: every position moved down by this many bytes.</summary>
@@ -193,6 +200,16 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
         {
             _scopeStart = Math.Max(0, _scopeStart - bytes);
             _scopeEnd = Math.Max(0, _scopeEnd - bytes);
+        }
+
+        if (_currentStart >= bytes)
+        {
+            _currentStart -= bytes;
+            _currentEnd -= bytes;
+        }
+        else
+        {
+            _currentStart = _currentEnd = -1;
         }
 
         _trimmedBytes += bytes;
@@ -368,6 +385,7 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
 
     private void ClearCurrentMatch()
     {
+        _currentStart = _currentEnd = -1;
         Send(LogConstants.SciSetIndicatorCurrent, LogConstants.CurrentMatchIndicatorId);
         Send(LogConstants.SciIndicatorClearRange, 0, DocumentLength);
         Send(LogConstants.SciSetIndicatorCurrent, LogConstants.SearchIndicatorId);

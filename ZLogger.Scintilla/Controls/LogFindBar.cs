@@ -87,8 +87,8 @@ internal sealed class LogFindBar : Control
     private bool _inSelectionOn;
 
     /// <summary>
-    /// Find in selection needs a range the user picked. A match the bar itself selected does not count,
-    /// or every search would offer to shrink the search to its own result.
+    /// Find in selection needs a range the user selected. The bar only moves the caret and never selects,
+    /// so any selection is the user's.
     /// </summary>
     private bool _canScope;
 
@@ -256,11 +256,8 @@ internal sealed class LogFindBar : Control
         _search.HighlightSearch(text, _options);
         if (jump)
         {
-            // As in an editor: typing moves to the first match from where the current one starts.
-            var start = _editor.DirectMessage(LogConstants.SciGetSelectionStart, IntPtr.Zero, IntPtr.Zero);
-            _editor.DirectMessage(LogConstants.SciSetSel, start, start);
+            // As in an editor: typing moves to the first match from the caret, which sits on the last one found.
             _current = _search.FindNext().Current;
-            RememberOwnSelection();
         }
 
         _total = -1;
@@ -276,7 +273,6 @@ internal sealed class LogFindBar : Control
             ApplyPattern(jump: false);
 
         _current = (forward ? _search.FindNext() : _search.FindPrevious()).Current;
-        RememberOwnSelection();
         RefreshCount();
     }
 
@@ -289,22 +285,10 @@ internal sealed class LogFindBar : Control
             Invalidate();
     }
 
-    private (IntPtr Start, IntPtr End) _ownSelection = (IntPtr.Zero, IntPtr.Zero);
-
-    private (IntPtr Start, IntPtr End) EditorSelection() => (
-        _editor.DirectMessage(LogConstants.SciGetSelectionStart, IntPtr.Zero, IntPtr.Zero),
-        _editor.DirectMessage(LogConstants.SciGetSelectionEnd, IntPtr.Zero, IntPtr.Zero));
-
-    private void RememberOwnSelection()
-    {
-        _ownSelection = EditorSelection();
-        UpdateCanScope();
-    }
-
     private void UpdateCanScope()
     {
-        var selection = EditorSelection();
-        var canScope = selection.End != selection.Start && selection != _ownSelection;
+        var canScope = _editor.DirectMessage(LogConstants.SciGetSelectionEnd, IntPtr.Zero, IntPtr.Zero)
+                       != _editor.DirectMessage(LogConstants.SciGetSelectionStart, IntPtr.Zero, IntPtr.Zero);
         if (canScope == _canScope)
             return;
         _canScope = canScope;
@@ -397,9 +381,8 @@ internal sealed class LogFindBar : Control
 
     /// <summary>
     /// The editor keeps believing it has the focus when the focus moves into one of its own child windows, and a
-    /// thread has only one caret: each match the bar then selects would move the text box's caret to where the
-    /// match is, which pins it to the box's right edge. So the editor is told it lost the focus. Clicking back
-    /// into it gives it the focus again as usual.
+    /// thread has only one caret: each match the bar moves to would drag the text box's caret along, pinning it to
+    /// the box's right edge. So the editor is told it lost the focus; clicking back into it restores it.
     /// </summary>
     private void OnInputGotFocus(object? sender, EventArgs e)
     {

@@ -91,6 +91,8 @@ internal static class LogConstants
     public const int SciDocLineFromVisible = 2221;
     public const int SciScrollToEnd = 2629;
     public const int SciSetFocus = 2380;
+    public const int SciGotoPos = 2025;
+    public const int SciScrollRange = 2569;
 
     public const int SearchRefreshThrottleMs = 40;
 

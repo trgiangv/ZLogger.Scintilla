@@ -228,10 +228,7 @@ internal sealed class ScintillaDocument : IDisposable
         return true;
     }
 
-    public bool HasSelection =>
-        Send(LogConstants.SciGetSelectionEnd) > Send(LogConstants.SciGetSelectionStart);
-
-    public int RankOfSelection() => _searchService.RankOfSelection();
+    public int RankOfCurrentMatch() => _searchService.RankOfCurrentMatch();
 
     public int DocumentLength => (int)Send(LogConstants.SciGetLength);
 
