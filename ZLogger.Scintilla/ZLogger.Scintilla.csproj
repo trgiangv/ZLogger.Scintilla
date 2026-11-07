@@ -52,17 +52,13 @@
         <Compile Remove="$(NuGetPackageRoot)polyfill\*\contentFiles\cs\*\ArrayBufferWriter.cs"/>
     </ItemGroup>
 
-    <!-- LookupEngine is compiled in as source. Merging its built assemblies would bring one more copy of the
-         Polyfill and JetBrains.Annotations source packages per assembly, renamed with random GUIDs, which
-         no Polyfill option can prevent because each copy is compiled before the merge. -->
+    <!-- LookupEngine is compiled in as source: merging its built assemblies would add a GUID-renamed copy of
+         Polyfill per assembly. Its JetBrains attributes are [Conditional], so they are compile-time only. -->
     <ItemGroup>
         <Compile Include="..\external\LookupEngine\source\LookupEngine\**\*.cs;..\external\LookupEngine\source\LookupEngine.Abstractions\**\*.cs"
                  Exclude="..\external\LookupEngine\source\*\bin\**;..\external\LookupEngine\source\*\obj\**"
                  Link="LookupEngine\%(RecursiveDir)%(Filename)%(Extension)"/>
-        <PackageReference Include="JetBrains.Annotations.Sources">
-            <PrivateAssets>all</PrivateAssets>
-            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
+        <PackageReference Include="JetBrains.Annotations" PrivateAssets="all" ExcludeAssets="runtime"/>
         <Using Include="JetBrains.Annotations"/>
     </ItemGroup>
 

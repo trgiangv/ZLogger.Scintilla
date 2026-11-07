@@ -409,7 +409,8 @@ flowchart LR
 ```
 
 - **LookupEngine** is a git submodule at `external/LookupEngine` — provides object decomposition for pretty JSON
-- Its source files compile directly into `ZLogger.Scintilla.dll`, so Debug and Release builds are the same shape. Merging separately built assemblies would bring one more copy of the Polyfill and JetBrains.Annotations source packages per assembly, renamed with random GUIDs, and no Polyfill option can prevent that because each copy is compiled before the merge
+- Its source files compile directly into `ZLogger.Scintilla.dll`, so Debug and Release builds are the same shape. Merging separately built assemblies would add a GUID-renamed copy of Polyfill per assembly
+- `JetBrains.Annotations` is compile-time only: its attributes are `[Conditional]`, so the assembly neither references nor embeds them
 - The NuGet package ships a **single assembly** with no external LookupEngine dependency
 - LookupEngine's public types remain public
 - `System.Text.Json` is a declared package dependency on `net48`, because LookupEngine needs a newer version than ZLogger asks for
