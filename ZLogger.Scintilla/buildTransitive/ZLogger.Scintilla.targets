@@ -1,0 +1,59 @@
+<Project>
+  <!--
+    Scintilla5.NET deploys Scintilla.dll and Lexilla.dll for win-x64, win-arm64 and win-x86; a process loads only its
+    own. ScintillaNativeRuntimes lists the ones to keep. Default: win-x64;win-arm64, or win-x86 for an x86 build.
+  -->
+  <Target Name="_ScintillaResolveNativeRuntimes">
+    <PropertyGroup>
+      <_ScintillaNativeRuntimes>$(ScintillaNativeRuntimes)</_ScintillaNativeRuntimes>
+      <_ScintillaNativeRuntimes Condition="'$(_ScintillaNativeRuntimes)' == '' and '$(PlatformTarget)' == 'x86'">win-x86</_ScintillaNativeRuntimes>
+      <_ScintillaNativeRuntimes Condition="'$(_ScintillaNativeRuntimes)' == ''">win-x64;win-arm64</_ScintillaNativeRuntimes>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ScintillaNativeRuntime Include="$(_ScintillaNativeRuntimes)" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_ScintillaDropX64>!@(_ScintillaNativeRuntime->AnyHaveMetadataValue('Identity', 'win-x64'))</_ScintillaDropX64>
+      <_ScintillaDropX86>!@(_ScintillaNativeRuntime->AnyHaveMetadataValue('Identity', 'win-x86'))</_ScintillaDropX86>
+      <_ScintillaDropArm64>!@(_ScintillaNativeRuntime->AnyHaveMetadataValue('Identity', 'win-arm64'))</_ScintillaDropArm64>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ScintillaNativeRuntime Remove="@(_ScintillaNativeRuntime)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Copies added as Content by Scintilla5.NET's build target. -->
+  <Target Name="_ScintillaTrimNativeContent"
+          BeforeTargets="AssignTargetPaths"
+          DependsOnTargets="_ScintillaResolveNativeRuntimes">
+    <ItemGroup>
+      <_ScintillaNativeContent Include="@(Content)"
+                           Condition="$([System.String]::Copy('%(Content.FullPath)').ToLowerInvariant().Contains('scintilla5.net')) and $([System.String]::Copy('%(Content.Link)').StartsWith('runtimes\'))" />
+      <_ScintillaNativeDrop Include="@(_ScintillaNativeContent)"
+                Condition="$(_ScintillaDropX64) and $([System.String]::Copy('%(_ScintillaNativeContent.Link)').StartsWith('runtimes\win-x64\'))" />
+      <_ScintillaNativeDrop Include="@(_ScintillaNativeContent)"
+                Condition="$(_ScintillaDropX86) and $([System.String]::Copy('%(_ScintillaNativeContent.Link)').StartsWith('runtimes\win-x86\'))" />
+      <_ScintillaNativeDrop Include="@(_ScintillaNativeContent)"
+                Condition="$(_ScintillaDropArm64) and $([System.String]::Copy('%(_ScintillaNativeContent.Link)').StartsWith('runtimes\win-arm64\'))" />
+      <Content Remove="@(_ScintillaNativeDrop)" />
+      <_ScintillaNativeContent Remove="@(_ScintillaNativeContent)" />
+      <_ScintillaNativeDrop Remove="@(_ScintillaNativeDrop)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The package's runtimes\ assets, which build and publish both copy from here. -->
+  <Target Name="_ScintillaTrimNativeRuntimeAssets"
+          AfterTargets="ResolvePackageAssets"
+          DependsOnTargets="_ScintillaResolveNativeRuntimes">
+    <ItemGroup>
+      <_ScintillaNativeDrop Include="@(RuntimeTargetsCopyLocalItems)"
+                Condition="$(_ScintillaDropX64) and '%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Scintilla5.NET' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' == 'win-x64'" />
+      <_ScintillaNativeDrop Include="@(RuntimeTargetsCopyLocalItems)"
+                Condition="$(_ScintillaDropX86) and '%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Scintilla5.NET' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' == 'win-x86'" />
+      <_ScintillaNativeDrop Include="@(RuntimeTargetsCopyLocalItems)"
+                Condition="$(_ScintillaDropArm64) and '%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Scintilla5.NET' and '%(RuntimeTargetsCopyLocalItems.RuntimeIdentifier)' == 'win-arm64'" />
+      <RuntimeTargetsCopyLocalItems Remove="@(_ScintillaNativeDrop)" />
+      <_ScintillaNativeDrop Remove="@(_ScintillaNativeDrop)" />
+    </ItemGroup>
+  </Target>
+</Project>

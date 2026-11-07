@@ -414,4 +414,5 @@ flowchart LR
 - LookupEngine's public types remain public
 - `System.Text.Json` is a declared package dependency on `net48`, because LookupEngine needs a newer version than ZLogger asks for
 - Scintilla5.NET keeps its build assets (`PrivateAssets="none"`), because its build target is what delivers the native DLLs to `net48` applications
+- `buildTransitive/ZLogger.Scintilla.targets` ships in the package's `buildTransitive/` and removes the native DLLs the consuming project does not deploy (`ScintillaNativeRuntimes`, default win-x64 and win-arm64), from both Scintilla5.NET's build-target copies and the package's runtime assets. `buildTransitive/` is what reaches a `net8.0-windows` project that gets the package through another project and copies its runtime assets itself
 - Polyfill is net48-only and internal, with `PolyUseEmbeddedAttribute` so that `InternalsVisibleTo` does not expose it

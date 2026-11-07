@@ -215,3 +215,15 @@ sequenceDiagram
 ## Target Frameworks
 
 `net48`, `net8.0-windows` and `net10.0-windows`, for both WinForms and WPF.
+
+### Native DLLs
+
+Scintilla5.NET ships `Scintilla.dll` and `Lexilla.dll` for win-x64, win-arm64 and win-x86, and the viewer loads the one for the process architecture from `runtimes\win-<arch>\native\` next to the application. The package deploys win-x64 and win-arm64 by default, which covers Revit and other current 64-bit hosts; a project built for `PlatformTarget` x86 gets win-x86 alone. To pick them yourself:
+
+```xml
+<PropertyGroup>
+  <ScintillaNativeRuntimes>win-x64</ScintillaNativeRuntimes>  <!-- or win-x64;win-arm64, or win-x86 -->
+</PropertyGroup>
+```
+
+This applies to build and publish, on `net48` and `net8.0-windows` alike, whether a project references the package directly or through another project.
