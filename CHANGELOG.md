@@ -4,6 +4,70 @@ All notable changes to ZLogger.Scintilla are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0] - 2026-11-08
+
+Whole-library correction. Rendering, the UI drain, scrolling, search and clicks now have tests on real windows with a running message loop, run on both `net48` and `net8.0-windows`. Benchmark figures in the entries below this one came from a suite that rendered nothing, and are withdrawn. See [docs/benchmarks.md](docs/benchmarks.md).
+
+### Added
+- `ScintillaOptions.WithScopes()` makes `BeginScope` values available to linkifiers. Off by default, because it costs every log call
+- A find bar in the viewer's top-right corner, opened with Ctrl+F while the log has the focus, so the host application's shortcuts keep working elsewhere. Works in WinForms, WPF and hosts with their own message loop such as Revit, and fits panes down to 550px wide
+- Find bar options: match case (Alt+C), whole word (Alt+W) and regular expression (Alt+R)
+- Find in selection (Alt+L): limits search, highlighting and the count to a range the user selected
+- Find bar keys: Enter and Shift+Enter, F3 and Shift+F3 for next and previous match, Escape to close
+- A live "n of total" count that follows logs as they arrive and are trimmed, and a distinct mark on the current match
+- `ScintillaNativeRuntimes` MSBuild property choosing which Scintilla native DLLs are deployed. By default win-x64 and win-arm64 only, instead of all three architectures; a project built for x86 gets win-x86 alone
+
+### Changed
+- URLs in log text are clickable with or without a linkifier, as this project always described. Only `http` and `https` qualify, because a click shell-executes the link
+- Auto-scroll pauses while the user reads older lines or a search match, and resumes at the end of the document
+- `Stop()` called on the UI thread returns without waiting for the pump, which stops after its current step. `Start()` waits for it before starting another. Called off the UI thread, `Stop()` still waits
+- Colorizers and linkifiers run outside the pump's lock, and may wait for the UI thread
+- A line logged after a quiet moment appears at once. Only lines close together wait for the flush interval
+- `SetFilter` with history disabled applies to new lines only and keeps the document, because there is nothing to rebuild it from
+- Regex search uses the ECMAScript grammar everywhere, and `CountMatchesAsync` returns 0 instead of throwing on an invalid pattern
+- `MaxLines` keeps exactly that many messages once logs pause, and can be a tenth over while they arrive
+- Lines that would be trimmed before anyone could see them are skipped, so `RenderedMessages` can be lower than the messages logged
+- `Clear()` called off the UI thread clears the document in queue order and returns before it happens
+- `SetPrettyJson` reapplies to existing lines at every filter level
+- Messages holding only immutable values are formatted on the pump. Any other message, and everything past 4,096 pending entries, is formatted on the logging thread
+- LookupEngine compiles into the assembly as source, which leaves one copy of Polyfill and no JetBrains.Annotations types
+- `System.Threading.Channels` and `System.Text.Json` are package dependencies only on `net48`
+- `CommunityToolkit.HighPerformance` is no longer a dependency
+- `LogEntry` is internal, since nothing public accepted or returned one
+- `ScintillaOptions.EnableTokenLinks` is removed, since links no longer depend on a linkifier
+- Locks use `System.Threading.Lock` on .NET 9 and later
+- `FindNext` and `FindPrevious` move the caret to the match and mark it instead of selecting it, and continue from wherever the user left the caret. A selection covered the match's mark, and replaced the user's own selection
+
+### Fixed
+- Auto-scroll with word wrap stopping short of the last message
+- UI thread hang on `SetFilter` with an active search
+- Rendering stopping for good after an exception, with history disabled and a filter, or under filter replay
+- Lines lost during filter replay, and released buffers reaching the document during history trim
+- `DroppedMessages` staying 0 and `PendingEntryCount` drifting with a drop policy
+- A backlog behind a blocked UI thread growing without limit
+- Filter replay holding the UI thread for its whole length
+- Auto-scroll moving the caret, and `FindNext` not scrolling to its match
+- Link tokens and search highlights drifting with non-ASCII text
+- Search rank off by one, and regex navigation disagreeing with the match count
+- A cancelled match count bringing back the pattern a newer search had replaced
+- Timestamps printed in UTC instead of local time
+- Format specifiers, alignment and `{{ }}` escapes being lost
+- A throwing `ToString` losing the entry, or reaching the application's logging call
+- A `ToString` or property that logs on the same thread corrupting the message being formatted
+- Custom serializers producing an empty parameter span, and JSON escaping non-ASCII text and `&`
+- A link opening three times on a double click, and opening at the end of a drag that selects text
+- A URL split in two by a parameter value inside it
+- URLs styled as links with no way to click them, and left unstyled in messages with no parameters
+- Local files and other programs reachable by clicking a link in log text
+- The first `Clear()` releasing the original document twice
+- Pooled arrays keeping click actions alive
+- `net48` NuGet consumers failing at runtime: missing native DLLs, then a `System.Text.Json` version conflict
+- Deadlock when a colorizer or linkifier waited for the UI thread while the UI thread called `Clear()`, `Stop()` or `Dispose()`, as closing a window does
+- XML documentation stating a default collection limit of 50, where the default is 20
+- XML documentation stating that a colorizer still colors a token a linkifier matched
+
+---
+
 ## [0.0.9] - 2026-08-16
 
 ### Changed
@@ -109,7 +173,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 - `UrlClickTests` — added `EmitUrlOrFallback` with `preserveStyle`, `HasPotentialCandidate` theory, `FindAll` count, `TryNormalizeUri` tests
 
 #### Docs
-- `docs/benchmarks.md` — updated all numbers from latest benchmark run; SustainedLoad full pipeline 78.5 ms → 43.3 ms (45% faster)
+- `docs/benchmarks.md` — updated all numbers from latest benchmark run (withdrawn since: that suite rendered nothing)
 - `docs/testing.md` — added `EnumerableSerializationTests`, updated test count (~136), added per-file test counts, new test contract sections
 - `docs/architecture.md` — added "Clear / Memory Release" section with document swap diagram; updated timestamp format references
 
