@@ -7,7 +7,7 @@ ZLogger.Scintilla is published automatically via GitHub Actions when a version t
 ## Prerequisites
 
 - Write access to the repository
-- `NUGET_API_KEY` secret configured in GitHub repository settings (`Settings → Secrets and variables → Actions`)
+- A Trusted Publishing policy on nuget.org (once): **trgiangv → Trusted Publishing → Add**, with Repository Owner `trgiangv`, Repository `ZLogger.Scintilla`, Workflow File `publish.yml`, Environment empty. No API key is stored anywhere: the workflow trades a GitHub OIDC token for a key that lives one hour
 - All changes committed and pushed to `main`
 - Tests passing on `main`
 
@@ -23,7 +23,8 @@ flowchart LR
     D --> E["GitHub Actions triggered"]
     E --> F["dotnet restore + build -c Release"]
     F --> H["dotnet pack → .nupkg"]
-    H --> I["dotnet nuget push → nuget.org"]
+    H --> L["NuGet/login → temporary API key"]
+    L --> I["dotnet nuget push → nuget.org"]
 ```
 
 ---
@@ -88,14 +89,18 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 ```
 
-Steps executed:
+A tag push publishes that tag. **Run workflow** (`workflow_dispatch`) publishes the version in the `.csproj` of the chosen branch, which re-publishes a release whose tag predates a workflow fix.
+
+Steps executed, with `id-token: write` permission:
 1. `actions/checkout@v4` with `submodules: recursive` — required for LookupEngine submodule
 2. `dotnet restore` on the main project
 3. `dotnet build -c Release` — compiles the LookupEngine source into `ZLogger.Scintilla.dll`
 4. `dotnet pack -c Release --no-build` — packages the assembly
-5. `dotnet nuget push` with `--skip-duplicate` — idempotent; safe to re-run if the tag already exists on NuGet
+5. `NuGet/login@v1` with `user: trgiangv` — exchanges the job's OIDC token for a one-hour API key
+6. `dotnet nuget push` with that key and `--skip-duplicate` — idempotent; safe to re-run if the version already exists on NuGet
 
 ---
 
@@ -123,6 +128,7 @@ Steps executed:
 - `--skip-duplicate` suppresses this error; the workflow will still succeed
 - To publish a fix, bump to the next patch version
 
-**`NUGET_API_KEY` expired or missing:**
-- Generate a new API key at [nuget.org/account/apikeys](https://www.nuget.org/account/apikeys)
-- Update the secret in `Settings → Secrets and variables → Actions → NUGET_API_KEY`
+**`NuGet/login` fails, or the push is rejected with 401/403:**
+- Check the Trusted Publishing policy on nuget.org: owner `trgiangv`, repository `ZLogger.Scintilla`, workflow file `publish.yml` (file name only), no environment
+- A new policy for a private repository is only active for 7 days until its first publish; restart that window on nuget.org if it lapsed
+- The job needs `permissions: id-token: write`

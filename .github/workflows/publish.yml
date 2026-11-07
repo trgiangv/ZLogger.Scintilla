@@ -4,10 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  # Publishes the version in the .csproj of the chosen branch; nuget.org skips a version it already has.
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write  # OIDC token that nuget.org exchanges for a short-lived API key (Trusted Publishing)
 
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +29,15 @@ jobs:
 
       - run: dotnet pack ZLogger.Scintilla/ZLogger.Scintilla.csproj -c Release --no-build -o nupkg
 
+      # Right before the push: the key lives for one hour.
+      - name: NuGet login (OIDC → temporary API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: trgiangv  # nuget.org profile name of the package owner, not an email address
+
       - name: Push to NuGet
         shell: pwsh
         run: |
           $pkg = Get-ChildItem -Path nupkg -Filter *.nupkg | Select-Object -First 1
-          dotnet nuget push $pkg.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+          dotnet nuget push $pkg.FullName --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
