@@ -1,6 +1,6 @@
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using ZLogger.Scintilla.Services;
 namespace ZLogger.Scintilla.Controls;
 
 /// <summary>
@@ -74,13 +74,11 @@ internal sealed class FindBarToolTip : Form
         _title = title;
         _shortcut = shortcut;
         var scale = dpi / 96f;
-        int Scale(int value) => (int)Math.Round(value * scale);
-
         var titleSize = TextRenderer.MeasureText(title, _font, Size.Empty, TextFlags);
         var shortcutSize = shortcut.Length == 0 ? Size.Empty : TextRenderer.MeasureText(shortcut, _font, Size.Empty, TextFlags);
-        var gap = shortcut.Length == 0 ? 0 : Scale(ShortcutGap);
-        var padX = Scale(PaddingX);
-        var padY = Scale(PaddingY);
+        var gap = shortcut.Length == 0 ? 0 : Scaled(ShortcutGap);
+        var padX = Scaled(PaddingX);
+        var padY = Scaled(PaddingY);
         var height = Math.Max(titleSize.Height, shortcutSize.Height) + 2 * padY;
         var width = titleSize.Width + gap + shortcutSize.Width + 2 * padX;
 
@@ -89,14 +87,17 @@ internal sealed class FindBarToolTip : Form
 
         var area = Screen.FromRectangle(anchor).WorkingArea;
         var x = Math.Max(area.Left, Math.Min(area.Right - width, anchor.Left + (anchor.Width - width) / 2));
-        var y = anchor.Bottom + Scale(AnchorGap);
+        var y = anchor.Bottom + Scaled(AnchorGap);
         if (y + height > area.Bottom)
-            y = anchor.Top - Scale(AnchorGap) - height;
+            y = anchor.Top - Scaled(AnchorGap) - height;
 
         Bounds = new Rectangle(x, y, width, height);
         Invalidate();
         if (!Visible)
             Show();
+        return;
+
+        int Scaled(int value) => (int)Math.Round(value * scale);
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -109,12 +110,14 @@ internal sealed class FindBarToolTip : Form
     private void ApplyWindowFrame()
     {
         var corner = DwmwcpRoundSmall;
-        _framedByWindowManager = DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref corner, sizeof(int)) == 0;
+        _framedByWindowManager =
+            NativeWindowsHelper.DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref corner, sizeof(int)) == 0;
         if (!_framedByWindowManager)
             return;
 
+        // Rounding worked, so this attribute exists too. Should it fail anyway, the border keeps the system color.
         var border = ColorTranslator.ToWin32(_border);
-        DwmSetWindowAttribute(Handle, DwmwaBorderColor, ref border, sizeof(int));
+        _ = NativeWindowsHelper.DwmSetWindowAttribute(Handle, DwmwaBorderColor, ref border, sizeof(int));
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -138,7 +141,4 @@ internal sealed class FindBarToolTip : Form
             _font.Dispose();
         base.Dispose(disposing);
     }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }

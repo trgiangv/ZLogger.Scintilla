@@ -1,6 +1,5 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using ScintillaNET;
 using ZLogger.Scintilla.Models;
@@ -36,7 +35,6 @@ internal sealed class LogFindBar : Control
     private const int CountPadding = 4;
     private const int ButtonSize = 22;
     private const int ButtonRadius = 3;
-    private const int ToggleRadius = 3;
     private const int ButtonGap = 1;
     private const int GroupGap = 4;
 
@@ -110,7 +108,7 @@ internal sealed class LogFindBar : Control
             BackColor = _palette.Field,
             ForeColor = _palette.Text
         };
-        _input.HandleCreated += (_, _) => SendMessage(_input.Handle, EmSetCueBanner, (IntPtr)1, "Find");
+        _input.HandleCreated += (_, _) => NativeWindowsHelper.SendMessage(_input.Handle, EmSetCueBanner, 1, "Find");
         _input.TextChanged += OnInputTextChanged;
         _input.KeyDown += (_, e) => editor.HandleCommandKey(e);
         _input.GotFocus += OnInputGotFocus;
@@ -153,8 +151,10 @@ internal sealed class LogFindBar : Control
 
     // ---- Commands ----------------------------------------------------------------------------------------------
 
+    // Keys is a flags enum with hundreds of values; these switches handle the bar's shortcuts and nothing else.
     private bool HandleKey(Keys keyData)
     {
+        // ReSharper disable once SwitchStatementMissingSomeEnumCasesNoDefault
         switch (keyData)
         {
             case Keys.Control | Keys.F:
@@ -170,6 +170,7 @@ internal sealed class LogFindBar : Control
         if (!Visible)
             return false;
 
+        // ReSharper disable once SwitchStatementHandlesSomeKnownEnumValuesWithDefault
         switch (keyData)
         {
             case Keys.Escape:
@@ -313,6 +314,19 @@ internal sealed class LogFindBar : Control
     // ---- Counting ----------------------------------------------------------------------------------------------
 
     private async void StartCount()
+    {
+        try
+        {
+            await CountAsync();
+        }
+        catch (Exception)
+        {
+            // An async void method would rethrow on the host's message loop, which in Revit shows an error dialog.
+            // The count is only a hint, so a failed one leaves it unknown.
+        }
+    }
+
+    private async Task CountAsync()
     {
         CancelCount();
         var cts = new CancellationTokenSource();
@@ -472,16 +486,8 @@ internal sealed class LogFindBar : Control
     private static readonly Part[] ClickableParts =
         [Part.MatchCase, Part.WholeWord, Part.Regex, Part.Previous, Part.Next, Part.InSelection, Part.Close];
 
-    private Part HitTest(Point point)
-    {
-        foreach (var part in ClickableParts)
-        {
-            if (BoundsOf(part).Contains(point))
-                return part;
-        }
-
-        return Part.None;
-    }
+    /// <summary>The part under <paramref name="point"/>, or <see cref="Part.None"/>, which is the enum's default.</summary>
+    private Part HitTest(Point point) => ClickableParts.FirstOrDefault(part => BoundsOf(part).Contains(point));
 
     private Rectangle BoundsOf(Part part) => part switch
     {
@@ -566,10 +572,14 @@ internal sealed class LogFindBar : Control
         var pressed = _pressed;
         _pressed = Part.None;
         Invalidate();
-        if (e.Button != MouseButtons.Left || pressed == Part.None || HitTest(e.Location) != pressed)
-            return;
+        // A click is a press and a release on the same part.
+        if (e.Button == MouseButtons.Left && HitTest(e.Location) == pressed)
+            Activate(pressed);
+    }
 
-        switch (pressed)
+    private void Activate(Part part)
+    {
+        switch (part)
         {
             case Part.MatchCase: ToggleOption(SearchOptions.MatchCase); break;
             case Part.WholeWord: ToggleOption(SearchOptions.WholeWord); break;
@@ -578,6 +588,9 @@ internal sealed class LogFindBar : Control
             case Part.Next: Navigate(forward: true); break;
             case Part.InSelection: ToggleInSelection(); break;
             case Part.Close: CloseBar(); break;
+            case Part.None:
+            default:
+                break;
         }
     }
 
@@ -587,11 +600,20 @@ internal sealed class LogFindBar : Control
 
     private const string NoResults = "No results";
 
-    private string CountText =>
-        _input.TextLength == 0 || _total == 0 ? NoResults
-        : _total < 0 ? (_current > 0 ? $"{_current:n0} of ?" : "…")
-        : _current > 0 ? $"{_current:n0} of {_total:n0}"
-        : $"? of {_total:n0}";
+    private string CountText
+    {
+        get
+        {
+            if (_input.TextLength == 0 || _total == 0)
+                return NoResults;
+
+            // A negative total is a count still running.
+            if (_total < 0)
+                return _current > 0 ? $"{_current:n0} of ?" : "…";
+
+            return _current > 0 ? $"{_current:n0} of {_total:n0}" : $"? of {_total:n0}";
+        }
+    }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -606,9 +628,9 @@ internal sealed class LogFindBar : Control
             g.FillPath(fill, card);
 
         PaintField(g);
-        PaintButton(g, Part.MatchCase, _matchCase, "Aa", _toggleFont, enabled: true, Has(SearchOptions.MatchCase), ToggleRadius);
-        PaintButton(g, Part.WholeWord, _wholeWord, "ab", _underlinedToggleFont, enabled: true, Has(SearchOptions.WholeWord), ToggleRadius);
-        PaintButton(g, Part.Regex, _regex, ".*", _toggleFont, enabled: true, Has(SearchOptions.Regex), ToggleRadius);
+        PaintButton(g, Part.MatchCase, _matchCase, "Aa", _toggleFont, enabled: true, Has(SearchOptions.MatchCase));
+        PaintButton(g, Part.WholeWord, _wholeWord, "ab", _underlinedToggleFont, enabled: true, Has(SearchOptions.WholeWord));
+        PaintButton(g, Part.Regex, _regex, ".*", _toggleFont, enabled: true, Has(SearchOptions.Regex));
         TextRenderer.DrawText(g, CountText, _textFont, _count, HasNoResults ? p.Error : p.Muted,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
             | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
@@ -640,25 +662,38 @@ internal sealed class LogFindBar : Control
 
     private bool Has(SearchOptions option) => (_options & option) != 0;
 
-    private void PaintButton(Graphics g, Part part, Rectangle rect, string glyph, Font font, bool enabled, bool toggled,
-        int radius = ButtonRadius)
+    private void PaintButton(Graphics g, Part part, Rectangle rect, string glyph, Font font, bool enabled, bool toggled)
     {
-        var p = _palette;
         var hot = enabled && _hover == part;
         var down = hot && _pressed == part;
-        using var path = RoundedRect(rect, Scale(radius));
+        using var path = RoundedRect(rect, Scale(ButtonRadius));
 
-        Color? fill = toggled ? p.AccentSoft : down ? p.Pressed : hot ? p.Hover : null;
-        if (fill is { } color)
+        if (ButtonFill(toggled, down, hot) is { } color)
         {
             using var brush = new SolidBrush(color);
             g.FillPath(brush, path);
         }
 
-        var foreground = !enabled ? p.Disabled : toggled ? p.Accent : p.Text;
-        TextRenderer.DrawText(g, glyph, font, rect, foreground,
+        TextRenderer.DrawText(g, glyph, font, rect, ButtonForeground(enabled, toggled),
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
             | TextFormatFlags.NoPadding);
+    }
+
+    /// <summary>A toggled option keeps its accent; otherwise pressed, then hovered. None at rest.</summary>
+    private Color? ButtonFill(bool toggled, bool down, bool hot)
+    {
+        if (toggled)
+            return _palette.AccentSoft;
+        if (down)
+            return _palette.Pressed;
+        return hot ? _palette.Hover : null;
+    }
+
+    private Color ButtonForeground(bool enabled, bool toggled)
+    {
+        if (!enabled)
+            return _palette.Disabled;
+        return toggled ? _palette.Accent : _palette.Text;
     }
 
     private static GraphicsPath RoundedRect(Rectangle rect, int radius)
@@ -681,10 +716,10 @@ internal sealed class LogFindBar : Control
     /// </summary>
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WmSetCursor && ((int)(long)m.LParam & 0xFFFF) == HtClient)
+        if (m.Msg == WmSetCursor && (m.LParam.ToInt64() & 0xFFFF) == HtClient)
         {
             Cursor.Current = m.WParam == _input.Handle ? Cursors.IBeam : Cursors.Default;
-            m.Result = (IntPtr)1;
+            m.Result = new IntPtr(1);
             return;
         }
 
@@ -714,9 +749,6 @@ internal sealed class LogFindBar : Control
         base.Dispose(disposing);
     }
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
-
     /// <summary>
     /// A text box that asks for every key. A native host that runs IsDialogMessage, as MFC hosts such as Revit do,
     /// would otherwise turn Enter and Escape into the parent's OK and Cancel before the box sees them.
@@ -730,22 +762,21 @@ internal sealed class LogFindBar : Control
         {
             base.WndProc(ref m);
             if (m.Msg == WmGetDlgCode)
-                m.Result = (IntPtr)((long)m.Result | DlgcWantAllKeys);
+                m.Result = new IntPtr(m.Result.ToInt64() | DlgcWantAllKeys);
         }
     }
 
     /// <summary>Icons from the Windows icon font, with plain characters where it is missing.</summary>
     private sealed record Glyphs(string Up, string Down, string Selection, string Close)
     {
+        private static readonly string[] IconFamilies = ["Segoe Fluent Icons", "Segoe MDL2 Assets"];
+
         public static (Glyphs Glyphs, string Family) Resolve()
         {
-            foreach (var family in new[] { "Segoe Fluent Icons", "Segoe MDL2 Assets" })
-            {
-                if (IsInstalled(family))
-                    return (new Glyphs("", "", "", ""), family);
-            }
-
-            return (new Glyphs("↑", "↓", "≡", "✕"), "Segoe UI Symbol");
+            var family = IconFamilies.FirstOrDefault(IsInstalled);
+            return family is not null
+                ? (new Glyphs("", "", "", ""), family)
+                : (new Glyphs("↑", "↓", "≡", "✕"), "Segoe UI Symbol");
         }
 
         private static bool IsInstalled(string family)

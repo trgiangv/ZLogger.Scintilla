@@ -7,10 +7,17 @@ internal static partial class NativeWindowsHelper
 {
     private const string UxThemeDll = "uxtheme.dll";
     private const string User32Dll = "user32.dll";
+    private const string DwmApiDll = "dwmapi.dll";
 
 #if NET8_0_OR_GREATER
     [LibraryImport(User32Dll, EntryPoint = "GetParent")]
     internal static partial IntPtr GetParent(IntPtr hWnd);
+
+    [LibraryImport(User32Dll, EntryPoint = "SendMessageW", StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial IntPtr SendMessage(IntPtr hWnd, int msg, nint wParam, string lParam);
+
+    [LibraryImport(DwmApiDll, EntryPoint = "DwmSetWindowAttribute")]
+    internal static partial int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     [LibraryImport(UxThemeDll, EntryPoint = "SetWindowTheme", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     private static partial int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
@@ -23,6 +30,12 @@ internal static partial class NativeWindowsHelper
 #else
     [DllImport(User32Dll)]
     internal static extern IntPtr GetParent(IntPtr hWnd);
+
+    [DllImport(User32Dll, EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
+    internal static extern IntPtr SendMessage(IntPtr hWnd, int msg, nint wParam, string lParam);
+
+    [DllImport(DwmApiDll)]
+    internal static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     [DllImport(UxThemeDll, CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
