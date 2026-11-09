@@ -62,11 +62,11 @@ internal sealed class ScintillaStyleService(
 
     internal void ReleaseBuffer()
     {
-        if (_styleIdBuffer.Length > 0)
-        {
-            ArrayPool<byte>.Shared.Return(_styleIdBuffer);
-            _styleIdBuffer = [];
-        }
+        if (_styleIdBuffer.Length == 0)
+            return;
+
+        ArrayPool<byte>.Shared.Return(_styleIdBuffer);
+        _styleIdBuffer = [];
     }
 
     private void EnsureStyleIdBuffer(int requiredSize)

@@ -69,7 +69,7 @@ internal sealed class ScintillaInteractionService(LogScintillaControl scintilla,
         var hi = tokenRanges.Count - 1;
         while (lo <= hi)
         {
-            var mid = lo + ((hi - lo) / 2);
+            var mid = lo + (hi - lo) / 2;
             var mapped = tokenRanges[mid];
             if (position < mapped.Start)
             {

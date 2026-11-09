@@ -441,5 +441,5 @@ internal sealed class ScintillaDocument : IDisposable
     }
 
     private long Send(int message, long wParam = 0, long lParam = 0) =>
-        (long)_scintilla.DirectMessage(message, (IntPtr)wParam, (IntPtr)lParam);
+        (long)_scintilla.DirectMessage(message, new IntPtr(wParam), new IntPtr(lParam));
 }

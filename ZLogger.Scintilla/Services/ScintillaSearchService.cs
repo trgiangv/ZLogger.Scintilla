@@ -218,11 +218,11 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
         var index = _matchIndex.BinarySearch(_firstLiveMatch, _matchIndex.Count - _firstLiveMatch, _trimmedBytes, null);
         _firstLiveMatch = index >= 0 ? index : ~index;
 
-        if (_firstLiveMatch > _matchIndex.Count / 2)
-        {
-            _matchIndex.RemoveRange(0, _firstLiveMatch);
-            _firstLiveMatch = 0;
-        }
+        if (_firstLiveMatch <= _matchIndex.Count / 2)
+            return;
+
+        _matchIndex.RemoveRange(0, _firstLiveMatch);
+        _firstLiveMatch = 0;
     }
 
     /// <summary>The whole document was replaced or emptied.</summary>
@@ -252,7 +252,12 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
             : (0, length);
     }
 
-    private static int Clamp(int value, int min, int max) => value < min ? min : value > max ? max : value;
+    private static int Clamp(int value, int min, int max)
+    {
+        if (value < min)
+            return min;
+        return value > max ? max : value;
+    }
 
     /// <summary>Returns the 1-based rank of the match starting at <paramref name="position"/>.</summary>
     private int RankOf(int position)
@@ -328,16 +333,17 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
         fixed (byte* pattern = _patternBytes)
             position = (int)scintilla.DirectMessage(LogConstants.SciSearchInTarget, (IntPtr)_patternBytes.Length, (IntPtr)pattern);
 
-        if (position == -2)
+        if (position != -2)
         {
-            // Scintilla reports an invalid expression through its status too, and nothing clears that by itself.
-            Send(LogConstants.SciSetStatus);
-            _patternInvalid = true;
+            return position < 0
+                ? (-1, -1)
+                : (position, (int)Send(LogConstants.SciGetTargetEnd));
         }
 
-        return position < 0
-            ? (-1, -1)
-            : (position, (int)Send(LogConstants.SciGetTargetEnd));
+        // An invalid expression. Scintilla reports it through its status too, and nothing clears that by itself.
+        Send(LogConstants.SciSetStatus);
+        _patternInvalid = true;
+        return (-1, -1);
     }
 
     private void HighlightVisibleMatches()
@@ -505,5 +511,5 @@ internal sealed class ScintillaSearchService(ScintillaNET.Scintilla scintilla)
     }
 
     private long Send(int message, long wParam = 0, long lParam = 0) =>
-        (long)scintilla.DirectMessage(message, (IntPtr)wParam, (IntPtr)lParam);
+        (long)scintilla.DirectMessage(message, new IntPtr(wParam), new IntPtr(lParam));
 }
