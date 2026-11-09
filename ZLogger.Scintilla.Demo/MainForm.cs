@@ -84,8 +84,8 @@ internal sealed class MainForm : Form
             FlowDirection = FlowDirection.LeftToRight
         };
 
-        _levelFilterCombo.Items.AddRange(new object[]
-        {
+        _levelFilterCombo.Items.AddRange(
+        [
             "All",
             nameof(LogLevel.Trace),
             nameof(LogLevel.Debug),
@@ -93,9 +93,9 @@ internal sealed class MainForm : Form
             nameof(LogLevel.Warning),
             nameof(LogLevel.Error),
             nameof(LogLevel.Critical)
-        });
+        ]);
         _levelFilterCombo.SelectedIndex = 0;
-        _themeCombo.Items.AddRange(new object[] { "Dark", "Light" });
+        _themeCombo.Items.AddRange(["Dark", "Light"]);
         _themeCombo.SelectedItem = "Dark";
         toolbar.Controls.Add(_startFloodButton);
         toolbar.Controls.Add(_stopFloodButton);
@@ -206,7 +206,7 @@ internal sealed class MainForm : Form
             {
                 HostName = "rvt-host-01",
                 Environment = "Production",
-                Thresholds = new[] { 512, 1024, 2048 }
+                Thresholds = [512, 1024, 2048]
             }
         };
         _logger.ZLogInformation($"{classPayload}");
@@ -389,10 +389,7 @@ internal sealed class MainForm : Form
 
     private static LogLevel ParseFilterLevel(string? levelText)
     {
-        if (Enum.TryParse<LogLevel>(levelText, ignoreCase: true, out var level))
-            return level;
-
-        return LogLevel.Trace;
+        return Enum.TryParse<LogLevel>(levelText, ignoreCase: true, out var level) ? level : LogLevel.Trace;
     }
 }
 

@@ -172,9 +172,6 @@ public partial class MainWindow
 
     private static LogLevel ParseFilterLevel(string? levelText)
     {
-        if (Enum.TryParse<LogLevel>(levelText, ignoreCase: true, out var level))
-            return level;
-
-        return LogLevel.Trace;
+        return Enum.TryParse<LogLevel>(levelText, ignoreCase: true, out var level) ? level : LogLevel.Trace;
     }
 }

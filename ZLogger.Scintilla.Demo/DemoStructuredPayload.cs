@@ -16,5 +16,5 @@ internal sealed class DemoStructuredDetails
 {
     public string HostName { get; set; } = string.Empty;
     public string Environment { get; set; } = string.Empty;
-    public int[] Thresholds { get; set; } = Array.Empty<int>();
+    public int[] Thresholds { get; set; } = [];
 }

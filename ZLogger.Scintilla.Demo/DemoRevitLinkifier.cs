@@ -36,14 +36,11 @@ public sealed class DemoRevitLinkifier : ILinkifier
             return true;
         }
 
-        if (LooksLikeIfcGuid(token))
-        {
-            var captured = token;
-            onClick = () => ShowTokenInfo("IfcGuid", captured, $"revitlog://ifcguid/{Uri.EscapeDataString(captured)}");
-            return true;
-        }
+        if (!LooksLikeIfcGuid(token))
+            return false;
 
-        return false;
+        onClick = () => ShowTokenInfo("IfcGuid", token, $"revitlog://ifcguid/{Uri.EscapeDataString(token)}");
+        return true;
     }
 
     private static void ShowTokenInfo(string kind, string value, string uri)
@@ -62,9 +59,8 @@ public sealed class DemoRevitLinkifier : ILinkifier
     {
         if (token.Length != 22)
             return false;
-        for (var i = 0; i < token.Length; i++)
+        foreach (var c in token)
         {
-            var c = token[i];
             if (!(char.IsLetterOrDigit(c) || c == '_' || c == '$'))
                 return false;
         }
@@ -79,9 +75,9 @@ public sealed class DemoRevitLinkifier : ILinkifier
     private static int CountChar(string text, char value)
     {
         var count = 0;
-        for (var i = 0; i < text.Length; i++)
+        foreach (var c in text)
         {
-            if (text[i] == value)
+            if (c == value)
                 count++;
         }
         return count;

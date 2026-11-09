@@ -10,7 +10,7 @@ namespace ZLogger.Scintilla.Demo;
 public sealed class DemoRevitColorizer : ILogColorizer
 {
     private static readonly Color AureconColor = Color.FromArgb(120, 255, 170);
-    private static readonly byte[] AureconBytes = { (byte)'a', (byte)'u', (byte)'r', (byte)'e', (byte)'c', (byte)'o', (byte)'n' };
+    private static readonly byte[] AureconBytes = "aurecon"u8.ToArray();
 
     public bool TryGetColor(ReadOnlySpan<byte> utf8Token, out Color color)
     {
