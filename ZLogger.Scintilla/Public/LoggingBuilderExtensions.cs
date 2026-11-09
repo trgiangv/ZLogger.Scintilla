@@ -43,7 +43,11 @@ public static class LoggingBuilderExtensions
         ILoggingBuilder builder, TViewer viewer)
         where TViewer : ScintillaLogViewerBase
     {
+#if NET8_0_OR_GREATER
+        ArgumentNullException.ThrowIfNull(builder);
+#else
         if (builder is null) throw new ArgumentNullException(nameof(builder));
+#endif
 
         builder.Services.TryAddSingleton(viewer);
         builder.Services.TryAddSingleton<ScintillaLogViewerBase>(viewer);

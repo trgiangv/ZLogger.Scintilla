@@ -151,17 +151,18 @@ internal sealed class ScintillaLogProcessor : IAsyncLogProcessor
         if (type == _templateEntryType)
             return true;
 
-        // Its state types are internal to their libraries, so the type can only be recognized by name.
-        if (type.IsGenericType
-            && type.GetGenericArguments()[0] is { IsGenericType: true } state
-            && state.GetGenericArguments()[0].FullName == "Microsoft.Extensions.Logging.FormattedLogValues")
-        {
-            _templateEntryType = type;
-            return true;
-        }
+        if (!IsFormattedLogValuesEntry(type))
+            return false;
 
-        return false;
+        _templateEntryType = type;
+        return true;
     }
+
+    /// <summary>Its state types are internal to their libraries, so the type can only be recognized by name.</summary>
+    private static bool IsFormattedLogValuesEntry(Type type) =>
+        type.IsGenericType
+        && type.GetGenericArguments()[0] is { IsGenericType: true } state
+        && state.GetGenericArguments()[0].FullName == "Microsoft.Extensions.Logging.FormattedLogValues";
 
     private static bool IsImmutableValue(Type type) =>
         type == typeof(string)

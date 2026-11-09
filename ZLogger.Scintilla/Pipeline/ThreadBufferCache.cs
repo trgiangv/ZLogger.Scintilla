@@ -29,14 +29,12 @@ internal static class ThreadBufferCache
         }
 
         writer = _second;
-        if (writer is not null)
-        {
-            _second = null;
-            writer.Clear();
-            return writer;
-        }
+        if (writer is null)
+            return new ArrayBufferWriter<byte>(LogConstants.LogProcessorBufferCapacity);
 
-        return new ArrayBufferWriter<byte>(LogConstants.LogProcessorBufferCapacity);
+        _second = null;
+        writer.Clear();
+        return writer;
     }
 
     /// <summary>A writer that grew for one huge message is not kept, or the thread would hold that memory for good.</summary>
