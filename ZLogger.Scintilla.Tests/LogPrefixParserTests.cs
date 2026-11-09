@@ -42,7 +42,7 @@ public sealed class LogPrefixParserTests
     [TestMethod]
     public void LogPrefixParser_Prefix_IsRecognized_ForWellFormedInput()
     {
-        var prefix = "[12:34:56 INF] some message";
+        const string prefix = "[12:34:56 INF] some message";
         var utf8 = Encoding.UTF8.GetBytes(prefix);
         var result = LogPrefixParser.TryParse(utf8);
         Assert.IsTrue(result.Found);
@@ -55,7 +55,7 @@ public sealed class LogPrefixParserTests
     [TestMethod]
     public void LogPrefixParser_Prefix_StillParsesMillisecondFormat()
     {
-        var prefix = "[12:34:56.789 INF] some message";
+        const string prefix = "[12:34:56.789 INF] some message";
         var utf8 = Encoding.UTF8.GetBytes(prefix);
         var result = LogPrefixParser.TryParse(utf8);
         Assert.IsTrue(result.Found);

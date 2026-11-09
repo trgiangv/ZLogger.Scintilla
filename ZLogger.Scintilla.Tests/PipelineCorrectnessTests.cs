@@ -314,9 +314,9 @@ public sealed class PipelineCorrectnessTests
             return true;
         });
 
-        using (var factory = CreateFactory(processor))
-            log(factory.CreateLogger("Test"), processor);
-
+        // Disposed on the way out, before the caller sees the list, so the processor has flushed every entry.
+        using var factory = CreateFactory(processor);
+        log(factory.CreateLogger("Test"), processor);
         return entries;
     }
 

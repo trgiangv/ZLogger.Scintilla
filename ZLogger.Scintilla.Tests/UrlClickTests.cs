@@ -13,7 +13,7 @@ public sealed class UrlClickTests
         var bytes = Encoding.UTF8.GetBytes(text);
         var matches = new List<(int Start, int Length)>();
         UrlScanner.FindAll(bytes, matches);
-        return matches.Select(m => Encoding.UTF8.GetString(bytes, m.Start, m.Length)).ToList();
+        return [.. matches.Select(m => Encoding.UTF8.GetString(bytes, m.Start, m.Length))];
     }
 
     [TestMethod]

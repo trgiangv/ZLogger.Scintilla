@@ -74,12 +74,12 @@ public sealed class PublicApiShapeTests
             "CountMatchesAsync",
             "RenderedMessages", "DroppedMessages", "PendingEntryCount", "HistoryEntries",
             "RegisterDisposeAction",
-            "Dispose",
+            "Dispose"
         };
 
         var actual = typeof(ScintillaLogViewerBase)
             .GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-            .Where(m => m is not MethodInfo mi || !mi.IsSpecialName)
+            .Where(m => m is not MethodInfo { IsSpecialName: true })
             .Select(m => m.Name)
             .Distinct()
             .OrderBy(n => n)
@@ -107,7 +107,7 @@ public sealed class PublicApiShapeTests
             nameof(ICustomSerializer),
             nameof(ILogColorizer),
             nameof(ILinkifier),
-            nameof(IScintillaTheme),
+            nameof(IScintillaTheme)
         };
 
         var missing = expected.Except(publicInterfaces).ToArray();

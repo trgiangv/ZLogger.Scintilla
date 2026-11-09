@@ -223,7 +223,7 @@ internal sealed class LiveViewer : IDisposable
         var bytePosition = System.Text.Encoding.UTF8.GetByteCount(document.AsSpan(0, index)) + 1;
         var x = (int)Sci(SciPointXFromPosition, 0, bytePosition);
         var y = (int)Sci(SciPointYFromPosition, 0, bytePosition) + 4;
-        return (y << 16) | (x & 0xFFFF);
+        return y << 16 | x & 0xFFFF;
     }
 
     public void Dispose()

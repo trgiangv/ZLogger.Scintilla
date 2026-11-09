@@ -70,7 +70,7 @@ public sealed class BatchPreparerTests
     [TestMethod]
     public void Prepare_WithJsonBytes_AppendsJsonAndStyleRanges()
     {
-        var jsonContent = "{\n  \"key\": \"value\"\n}";
+        const string jsonContent = "{\n  \"key\": \"value\"\n}";
         var jsonBytes = Encoding.UTF8.GetBytes(jsonContent);
         var properties = new Dictionary<string, object?>
         {
@@ -93,7 +93,7 @@ public sealed class BatchPreparerTests
     [TestMethod]
     public void Prepare_WithJsonBytes_CollectsTokenRangesForLinks()
     {
-        var jsonContent = "{\n  \"url\": \"https://example.com\"\n}";
+        const string jsonContent = "{\n  \"url\": \"https://example.com\"\n}";
         var jsonBytes = Encoding.UTF8.GetBytes(jsonContent);
         var properties = new Dictionary<string, object?>
         {
@@ -183,7 +183,7 @@ public sealed class BatchPreparerTests
         var entry = TestHelper.MakeEntry("test", LogLevel.Information);
         var batch = _preparer.Prepare(new List<LogEntry> { entry }, epoch: 1);
 
-        var ex = TestHelper.CaptureException(() => batch.ReturnBuffers());
+        var ex = TestHelper.CaptureException(batch.ReturnBuffers);
         Assert.IsNull(ex);
     }
 

@@ -72,9 +72,8 @@ public sealed class SolutionStructureTests
             directory = directory.Parent;
         }
 
-        if (directory is null)
-            throw new DirectoryNotFoundException("Unable to locate repository root from test output directory.");
-
-        return Path.Combine(directory.FullName, relativePath);
+        return directory is null
+            ? throw new DirectoryNotFoundException("Unable to locate repository root from test output directory.")
+            : Path.Combine(directory.FullName, relativePath);
     }
 }

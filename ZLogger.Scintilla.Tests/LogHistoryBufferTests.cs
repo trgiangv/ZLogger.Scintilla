@@ -55,7 +55,7 @@ public sealed class LogHistoryBufferTests
     public void Snapshot_SplitsIntoChunks()
     {
         var buf = MakeBuffer(maxEntries: 100);
-        buf.EnqueueBatch(Enumerable.Range(0, 25).Select(_ => Entry(LogLevel.Information)).ToArray());
+        buf.EnqueueBatch([.. Enumerable.Range(0, 25).Select(_ => Entry(LogLevel.Information))]);
 
         var sizes = buf.CaptureChunkedSnapshot(LogLevel.Trace, chunkSize: 10).Select(chunk => chunk.Count).ToArray();
 
@@ -100,7 +100,7 @@ public sealed class LogHistoryBufferTests
     }
 
     private static List<LogLevel> Levels(LogHistoryBuffer buffer, LogLevel minimum) =>
-        buffer.CaptureChunkedSnapshot(minimum).SelectMany(chunk => chunk.Select(entry => entry.Level).ToList()).ToList();
+        [.. buffer.CaptureChunkedSnapshot(minimum).SelectMany(chunk => chunk.Select(entry => entry.Level))];
 
     private static LogHistoryBuffer MakeBuffer(int maxEntries, LogIngestMetrics? metrics = null)
         => new(metrics ?? new LogIngestMetrics(), maxEntries);

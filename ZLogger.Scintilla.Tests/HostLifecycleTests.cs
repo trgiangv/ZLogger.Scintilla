@@ -13,7 +13,7 @@ public sealed class HostLifecycleTests
         var viewer = new ScintillaLogViewer();
         viewer.Dispose();
 
-        var ex = TestHelper.CaptureException(() => viewer.Dispose());
+        var ex = TestHelper.CaptureException(viewer.Dispose);
         Assert.IsNull(ex);
     }
 
@@ -74,7 +74,7 @@ public sealed class HostLifecycleTests
         {
             var viewer = new ScintillaLogViewerWpf();
             viewer.Dispose();
-            ex = TestHelper.CaptureException(() => viewer.Dispose());
+            ex = TestHelper.CaptureException(viewer.Dispose);
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
@@ -85,7 +85,7 @@ public sealed class HostLifecycleTests
     [TestMethod]
     public void ScintillaLogViewerWpf_TryPost_AfterDispose_ReturnsFalse()
     {
-        bool result = true;
+        var result = true;
         var thread = new Thread(() =>
         {
             var viewer = new ScintillaLogViewerWpf();

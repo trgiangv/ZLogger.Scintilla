@@ -97,7 +97,7 @@ public sealed class RenderFormattingTests
         var options = new ScintillaOptions();
         var renderer = new LogRenderer("Cascadia Mono", 10, options);
 
-        var message = "[12:00:00 INF] Hello World";
+        const string message = "[12:00:00 INF] Hello World";
         var entry = TestHelper.MakeEntry(message, LogLevel.Information);
 
         var segments = new List<RenderSegment>();

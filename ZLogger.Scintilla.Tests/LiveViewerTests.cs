@@ -115,7 +115,7 @@ public sealed class LiveViewerTests
             var poison = new LogEntry
             {
                 Level = LogLevel.Information,
-                Message = new ArraySegment<byte>(Encoding.UTF8.GetBytes("poison message")),
+                Message = new ArraySegment<byte>("poison message"u8.ToArray()),
                 Properties = new ThrowingProperties()
             };
 

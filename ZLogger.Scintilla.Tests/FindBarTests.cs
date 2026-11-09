@@ -8,6 +8,8 @@ using ZLogger.Scintilla.Models;
 using ZLogger.Scintilla.Public;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
+// Every lambda over `live` runs, or is joined, before the test's `using` disposes it.
+// ReSharper disable AccessToDisposedClosure
 namespace ZLogger.Scintilla.Tests;
 
 [TestClass]
@@ -32,8 +34,8 @@ public sealed class FindBarTests
 
         live.Ui(() =>
         {
-            var start = live.Control.DirectMessage(LogConstants.SciPositionFromLine, (IntPtr)10);
-            var end = live.Control.DirectMessage(LogConstants.SciPositionFromLine, (IntPtr)20);
+            var start = live.Control.DirectMessage(LogConstants.SciPositionFromLine, new IntPtr(10));
+            var end = live.Control.DirectMessage(LogConstants.SciPositionFromLine, new IntPtr(20));
             live.Control.DirectMessage(LogConstants.SciSetSel, start, end);
             live.Viewer.Search.HighlightSearch("needle");
             Assert.IsTrue(live.Viewer.Search.SetScope(true));
@@ -65,8 +67,8 @@ public sealed class FindBarTests
         // Lines 150..159 hold needle 150..159.
         live.Ui(() =>
         {
-            var start = live.Control.DirectMessage(LogConstants.SciPositionFromLine, (IntPtr)150);
-            var end = live.Control.DirectMessage(LogConstants.SciPositionFromLine, (IntPtr)160);
+            var start = live.Control.DirectMessage(LogConstants.SciPositionFromLine, new IntPtr(150));
+            var end = live.Control.DirectMessage(LogConstants.SciPositionFromLine, new IntPtr(160));
             live.Control.DirectMessage(LogConstants.SciSetSel, start, end);
             live.Viewer.Search.HighlightSearch("needle 15");
             live.Viewer.Search.SetScope(true);
@@ -122,12 +124,6 @@ public sealed class FindBarTests
         live.Logger.LogInformation("needle2 NEEDLE");
         live.WaitForLine("NEEDLE");
 
-        async Task<int> Count(string pattern, SearchOptions options)
-        {
-            live.Ui(() => live.Viewer.Search.HighlightSearch(pattern, options));
-            return await live.Viewer.CountMatchesAsync();
-        }
-
         Assert.AreEqual(5, await Count("needle", SearchOptions.None));
         Assert.AreEqual(3, await Count("needle", SearchOptions.MatchCase));
         Assert.AreEqual(3, await Count("needle", SearchOptions.WholeWord));
@@ -135,6 +131,12 @@ public sealed class FindBarTests
         Assert.AreEqual(3, await Count("needles?", SearchOptions.Regex | SearchOptions.MatchCase));
         // Whole word around a regular expression: "needle2" no longer counts.
         Assert.AreEqual(2, await Count("needles?", SearchOptions.Regex | SearchOptions.MatchCase | SearchOptions.WholeWord));
+
+        async Task<int> Count(string pattern, SearchOptions options)
+        {
+            live.Ui(() => live.Viewer.Search.HighlightSearch(pattern, options));
+            return await live.Viewer.CountMatchesAsync();
+        }
     }
 
     [TestMethod]
@@ -243,9 +245,9 @@ public sealed class FindBarTests
         var (overInput, overBar) = live.Ui(() =>
         {
             var input = bar.Controls.OfType<TextBox>().Single();
-            SendMessage(input.Handle, WmSetCursor, input.Handle, (WmMouseMove << 16) | HtClient);
+            SendMessage(input.Handle, WmSetCursor, input.Handle, WmMouseMove << 16 | HtClient);
             var cursorOverInput = Cursor.Current;
-            SendMessage(bar.Handle, WmSetCursor, bar.Handle, (WmMouseMove << 16) | HtClient);
+            SendMessage(bar.Handle, WmSetCursor, bar.Handle, WmMouseMove << 16 | HtClient);
             return (cursorOverInput, Cursor.Current);
         });
 
@@ -307,13 +309,11 @@ public sealed class FindBarTests
             .BuildServiceProvider();
         var viewer = services.GetRequiredService<ScintillaLogViewer>();
         var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("T");
-        using var form = new Form
-        {
-            ShowInTaskbar = false,
-            StartPosition = FormStartPosition.Manual,
-            Location = new System.Drawing.Point(60, 60),
-            ClientSize = new System.Drawing.Size(800, 300)
-        };
+        using var form = new Form();
+        form.ShowInTaskbar = false;
+        form.StartPosition = FormStartPosition.Manual;
+        form.Location = new System.Drawing.Point(60, 60);
+        form.ClientSize = new System.Drawing.Size(800, 300);
         form.Controls.Add(viewer.ScintillaControl);
         form.Show();
         viewer.Start();
@@ -333,7 +333,7 @@ public sealed class FindBarTests
 
         var input = bar.Controls.OfType<TextBox>().Single();
         foreach (var c in "abc")
-            PostMessage(input.Handle, WmChar, (IntPtr)c, IntPtr.Zero);
+            PostMessage(input.Handle, WmChar, new IntPtr(c), IntPtr.Zero);
         // Typing moves to the first match once its debounce has passed.
         var firstMatch = text.IndexOf("abc", StringComparison.Ordinal);
         if (PumpUntil(dialog, () => input.Text == "abc" && editor.CurrentPosition == firstMatch))
@@ -482,7 +482,7 @@ public sealed class FindBarTests
     /// The way WPF's message loop hands a key to WinForms: WindowsFormsHost listens to the thread's message
     /// filter and preprocesses keys for the WinForms control that owns the window.
     /// </summary>
-    private static bool SendThroughDispatcher(System.Windows.Forms.Control target, Keys key)
+    private static bool SendThroughDispatcher(Control target, Keys key)
     {
         WaitForNoModifierKeys();
         var msg = new MSG { hwnd = target.Handle, message = WmKeyDown, wParam = (IntPtr)key };
@@ -502,13 +502,13 @@ public sealed class FindBarTests
     private static void WaitForNoModifierKeys()
     {
         var until = Environment.TickCount + 5000;
-        while (System.Windows.Forms.Control.ModifierKeys != Keys.None && unchecked(Environment.TickCount - until) < 0)
+        while (Control.ModifierKeys != Keys.None && unchecked(Environment.TickCount - until) < 0)
             Thread.Sleep(20);
-        if (System.Windows.Forms.Control.ModifierKeys != Keys.None)
-            Assert.Inconclusive($"{System.Windows.Forms.Control.ModifierKeys} is held down on this machine.");
+        if (Control.ModifierKeys != Keys.None)
+            Assert.Inconclusive($"{Control.ModifierKeys} is held down on this machine.");
     }
 
-    private static bool PressKey(System.Windows.Forms.Control target, Keys key)
+    private static bool PressKey(Control target, Keys key)
     {
         WaitForNoModifierKeys();
         var msg = Message.Create(target.Handle, WmKeyDown, (IntPtr)key, IntPtr.Zero);

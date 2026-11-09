@@ -66,7 +66,7 @@ public sealed class EnumerableSerializationTests
     {
         var captured = CaptureLogEntry(logger =>
         {
-            var msg = "hello world";
+            const string msg = "hello world";
             logger.ZLogInformation($"Message: {msg}");
         });
 
@@ -89,7 +89,7 @@ public sealed class EnumerableSerializationTests
         var spans = (ParameterSpan[])captured.Properties[LogConstants.ParameterSpans]!;
         Assert.ContainsSingle(spans);
 
-        var expected = new List<int> { 1, 2, 3 }.ToString()!;
+        var expected = new List<int> { 1, 2, 3 }.ToString();
         Assert.AreEqual(expected, spans[0].FormattedValue);
     }
 
