@@ -27,9 +27,9 @@ internal readonly struct PendingEntry
 
 /// <summary>
 /// The bounded channel between logging threads and the pump. Reads must come from one thread at a time,
-/// which <see cref="ScintillaLogViewerBase"/> guarantees by reading only while holding its pump lock.
+/// which <see cref="BatchPump"/> guarantees by reading only while holding its pipeline lock.
 /// </summary>
-internal sealed class LogIngestPump
+internal sealed class LogIngestChannel
 {
     private readonly ChannelWriter<PendingEntry> _writer;
     private readonly ChannelReader<PendingEntry> _reader;
@@ -40,7 +40,7 @@ internal sealed class LogIngestPump
     /// Called for every entry the channel discards when full. With a drop policy, <c>TryWrite</c> returns
     /// true even when it discards, so this callback is the only way to learn about the discard.
     /// </param>
-    public LogIngestPump(ScintillaOptions options, Action<PendingEntry>? onDropped = null)
+    public LogIngestChannel(ScintillaOptions options, Action<PendingEntry>? onDropped = null)
     {
         _options = options;
 
@@ -81,12 +81,13 @@ internal sealed class LogIngestPump
         return read;
     }
 
-    public int Drain(Action<PendingEntry> onEntry)
+    /// <summary>Empties the channel, handing each entry to <paramref name="onDiscarded"/>. Returns how many there were.</summary>
+    public int DiscardAll(Action<PendingEntry> onDiscarded)
     {
         var count = 0;
         while (_reader.TryRead(out var entry))
         {
-            onEntry(entry);
+            onDiscarded(entry);
             count++;
         }
 

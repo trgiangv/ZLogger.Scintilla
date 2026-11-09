@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -120,7 +119,7 @@ public sealed class LiveViewerTests
                 Properties = new ThrowingProperties()
             };
 
-            live.Viewer.TryPost(poison);
+            live.Viewer.Pump.TryPost(poison);
             live.Logger.LogInformation("after-poison");
             live.WaitForLine("after-poison");
         }
@@ -825,13 +824,10 @@ public sealed class LiveViewerTests
         blocked.Wait();
 
         for (var i = 0; i < posted; i++)
-            live.Viewer.TryPost(TestHelper.MakeEntry($"line {i}", LogLevel.Information));
+            live.Viewer.Pump.TryPost(TestHelper.MakeEntry($"line {i}", LogLevel.Information));
         Thread.Sleep(200);
 
-        var queue = typeof(ScintillaLogViewerBase)
-            .GetField("_renderQueue", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(live.Viewer)!;
-        var queued = (int)queue.GetType().GetProperty("Count")!.GetValue(queue)!;
+        var queued = live.Viewer.RenderQueue.Count;
         var pending = live.Viewer.PendingEntryCount;
         release.Set();
 

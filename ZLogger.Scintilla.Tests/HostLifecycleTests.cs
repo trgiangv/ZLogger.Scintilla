@@ -37,7 +37,7 @@ public sealed class HostLifecycleTests
         viewer.Dispose();
 
         var entry = TestHelper.MakeEntry("hello", LogLevel.Information);
-        var result = viewer.TryPost(entry);
+        var result = viewer.Pump.TryPost(entry);
 
         Assert.IsFalse(result);
     }
@@ -49,7 +49,7 @@ public sealed class HostLifecycleTests
         viewer.Dispose();
 
         var entry = TestHelper.MakeEntry("hello", LogLevel.Information);
-        var ex = TestHelper.CaptureException(() => viewer.TryPost(entry));
+        var ex = TestHelper.CaptureException(() => viewer.Pump.TryPost(entry));
         Assert.IsNull(ex);
     }
 
@@ -91,7 +91,7 @@ public sealed class HostLifecycleTests
             var viewer = new ScintillaLogViewerWpf();
             viewer.Dispose();
             var entry = TestHelper.MakeEntry("hello", LogLevel.Information);
-            result = viewer.TryPost(entry);
+            result = viewer.Pump.TryPost(entry);
         });
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();

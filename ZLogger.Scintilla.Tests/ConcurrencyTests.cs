@@ -32,7 +32,7 @@ public sealed class ConcurrencyTests
                 try
                 {
                     var entry = TestHelper.MakeEntry($"msg{i}", (LogLevel)(i % 6));
-                    viewer.TryPost(entry);
+                    viewer.Pump.TryPost(entry);
                 }
                 catch (Exception ex)
                 {
@@ -84,7 +84,7 @@ public sealed class ConcurrencyTests
                     try
                     {
                         var entry = TestHelper.MakeEntry($"t{threadId}-{i}", LogLevel.Information);
-                        viewer.TryPost(entry);
+                        viewer.Pump.TryPost(entry);
                     }
                     catch (Exception ex)
                     {
@@ -114,15 +114,12 @@ public sealed class ConcurrencyTests
         for (var i = 0; i < 20; i++)
             viewer.SetFilter(levels[i % levels.Length]);
 
-        var epochField = typeof(ScintillaLogViewerBase)
-            .GetField("_documentEpoch", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        Assert.IsNotNull(epochField);
-        var epoch = (long)epochField.GetValue(viewer)!;
+        var epoch = viewer.RenderQueue.Epoch;
 
         viewer.Stop();
         viewer.Dispose();
 
-        Assert.IsTrue(epoch > 0, $"Expected _documentEpoch > 0 after 20 SetFilter calls, got {epoch}");
+        Assert.IsTrue(epoch > 0, $"Expected the document epoch > 0 after 20 SetFilter calls, got {epoch}");
     }
 
     [TestMethod]
@@ -138,7 +135,7 @@ public sealed class ConcurrencyTests
             try
             {
                 var entry = TestHelper.MakeEntry($"post-after-stop-{i}", LogLevel.Information);
-                viewer.TryPost(entry);
+                viewer.Pump.TryPost(entry);
             }
             catch (Exception ex)
             {

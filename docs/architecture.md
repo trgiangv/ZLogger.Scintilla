@@ -35,7 +35,9 @@ graph TB
 
     subgraph Pipeline["Pipeline/ — Log entry lifecycle"]
         Proc["ScintillaLogProcessor<br/><i>ZLogger IAsyncLogProcessor</i>"]
-        Pump["LogIngestPump<br/><i>BoundedChannel</i>"]
+        BPump["BatchPump<br/><i>pump thread: ingest, replay</i>"]
+        Drain["RenderQueue<br/><i>UI thread: apply, trim</i>"]
+        Pump["LogIngestChannel<br/><i>BoundedChannel</i>"]
         Hist["LogHistoryBuffer<br/><i>circular buffer</i>"]
         Prep["BatchPreparer<br/><i>entries → PreparedBatch</i>"]
         Search["SearchCoordinator<br/><i>async find/highlight</i>"]
@@ -63,11 +65,15 @@ graph TB
     WPF --> Base
     Ext --> Base
     Ext --> Proc
-    Base --> Pump
-    Base --> Hist
-    Base --> Prep
+    Base --> BPump
+    Base --> Drain
     Base --> Search
     Base --> Doc
+    BPump --> Pump
+    BPump --> Hist
+    BPump --> Prep
+    BPump -->|"PreparedBatch"| Drain
+    Drain --> Doc
     Proc --> FMT
     Prep --> LR
     LR --> JSH
@@ -113,8 +119,8 @@ sequenceDiagram
         Note over Prep: LogRenderer.BuildSegments<br/>Rented text, style and token arrays<br/>→ PreparedBatch (immutable)
         Prep-->>Pump: PreparedBatch
         Pump->>Hist: Enqueue entries, trim
-        Pump->>Queue: Enqueue(PreparedBatch)
-        Pump->>UI: BeginInvoke(DrainRenderQueue)
+        Pump->>Queue: RenderQueue.Enqueue(PreparedBatch)
+        Pump->>UI: BeginInvoke(RenderQueue.Drain)
     end
 
     UI->>Queue: TryDequeue, for up to 16 ms
@@ -207,12 +213,13 @@ sequenceDiagram
     participant Base as ScintillaLogViewerBase
     participant Pump as Pump Thread
     participant Hist as LogHistoryBuffer
-    participant Queue as ConcurrentQueue
+    participant Queue as RenderQueue
     participant Doc as ScintillaDocument
 
     User->>Base: SetFilter(LogLevel.Warning)
-    Base->>Base: Increment _documentEpoch
-    Base->>Pump: Request a replay, wake
+    Base->>Pump: BatchPump.SetFilter
+    Pump->>Queue: Advance the epoch
+    Pump->>Pump: Request a replay, wake
 
     Pump->>Queue: Reset batch (new epoch)
     Pump->>Hist: CaptureChunkedSnapshot(Warning)
@@ -266,7 +273,7 @@ sequenceDiagram
 
 Navigation, highlighting and counting use Scintilla's own search with the same flags, so they always agree. The match index survives new log lines, which only add to the end, and head trims, which shift its positions by a stored offset, so a rank costs at most one scan of the new text.
 
-Search refresh is lazy: `RefreshHighlightIfActive` runs once per `DrainRenderQueue` cycle, not per batch.
+Search refresh is lazy: `RefreshHighlightIfActive` runs once per `RenderQueue` drain, not per batch.
 
 ---
 
@@ -301,7 +308,7 @@ ZLogger.Scintilla/
 
 | File | Role |
 |------|------|
-| `ScintillaLogViewerBase` | Abstract base — pump loop, filter, history, search, metrics |
+| `ScintillaLogViewerBase` | Abstract base — public API, options, theme, and wiring of `BatchPump` and `RenderQueue` to the control |
 | `ScintillaLogViewer` | WinForms `UserControl` host |
 | `ScintillaLogViewerWpf` | WPF `WindowsFormsHost` wrapper |
 | `ScintillaOptions` | Fluent startup configuration |
@@ -309,12 +316,14 @@ ZLogger.Scintilla/
 | `IScintillaTheme`, `ILogColorizer`, `ILinkifier` | Extension point contracts |
 | `ScintillaThemes` | Built-in Dark / Light themes |
 
-### Pipeline/ — 7 files
+### Pipeline/ — 9 files
 
 | File | Role |
 |------|------|
 | `ScintillaLogProcessor` | ZLogger `IAsyncLogProcessor` entry point |
-| `LogIngestPump` | `BoundedChannel<LogEntry>` producer/consumer |
+| `BatchPump` | Pump thread: reads the channel, keeps the history, prepares batches, replays on a filter change, `Clear()` |
+| `RenderQueue` | UI thread: queue of prepared batches, document epoch, drain pacing, trim |
+| `LogIngestChannel` | `BoundedChannel<LogEntry>` producer/consumer |
 | `LogHistoryBuffer` | Circular buffer; chunked snapshot for filter reapply |
 | `BatchPreparer` | Off-thread: entries → `PreparedBatch` (pooled arrays) |
 | `SearchCoordinator` | Async find/highlight dispatch |
@@ -361,18 +370,19 @@ When `Clear()` is called on the viewer, the pipeline releases its entries and sw
 ```mermaid
 sequenceDiagram
     participant User
-    participant Base as ScintillaLogViewerBase
+    participant Base as BatchPump
     participant Hist as LogHistoryBuffer
-    participant Queue as ConcurrentQueue
+    participant Queue as RenderQueue
     participant Doc as ScintillaDocument
     participant Native as Native Scintilla
 
     User->>Base: Clear()
     Note over Base,Queue: Holding the pump lock
-    Base->>Base: Increment _documentEpoch, cancel any replay
+    Base->>Queue: Advance the epoch
+    Base->>Base: Cancel any replay
     Base->>Hist: Drain
     Base->>Queue: Discard queued batches
-    Base->>Doc: Clear() on the UI thread, or a Clear batch from elsewhere
+    Queue->>Doc: Clear() on the UI thread, or a Clear batch from elsewhere
     Doc->>Native: Document = Document.Empty
     Note over Native: Scintilla releases the old document and creates a new one
     Note over Doc: Re-apply ReadOnly and undo settings, forget tokens and the match index

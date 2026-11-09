@@ -55,7 +55,7 @@ public static class LoggingBuilderExtensions
             // By default ZLogger formats a template inside Log(), where a throwing ToString reaches the
             // application's logging call. Deferred, it runs in the formatter, which handles the failure.
             zLoggerOptions.IsFormatLogImmediatelyInStandardLog = false;
-            var processor = new ScintillaLogProcessor(viewer.TryPost);
+            var processor = new ScintillaLogProcessor(viewer.Pump.TryPost);
             viewer.AttachProcessor(processor);
             return processor;
         });

@@ -24,7 +24,7 @@ public sealed class PipelineCorrectnessTests
         var viewer = new ScintillaLogViewer(o => o.Channel(capacity: capacity, dropPolicy: BoundedChannelFullMode.DropWrite));
 
         for (var i = 0; i < posted; i++)
-            viewer.TryPost(TestHelper.MakeEntry($"line {i}", LogLevel.Information));
+            viewer.Pump.TryPost(TestHelper.MakeEntry($"line {i}", LogLevel.Information));
 
         Assert.AreEqual(posted - capacity, viewer.DroppedMessages);
         Assert.AreEqual(capacity, viewer.PendingEntryCount);
@@ -43,7 +43,7 @@ public sealed class PipelineCorrectnessTests
         var viewer = new ScintillaLogViewer(o => o.Channel(capacity: capacity, dropPolicy: policy));
 
         for (var i = 0; i < posted; i++)
-            viewer.TryPost(TestHelper.MakeEntry($"line {i}", LogLevel.Information));
+            viewer.Pump.TryPost(TestHelper.MakeEntry($"line {i}", LogLevel.Information));
 
         Assert.AreEqual(posted - capacity, viewer.DroppedMessages);
         Assert.AreEqual(capacity, viewer.PendingEntryCount);
