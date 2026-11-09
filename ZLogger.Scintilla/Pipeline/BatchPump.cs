@@ -282,10 +282,13 @@ internal sealed class BatchPump
     /// <summary>
     /// How long to wait before ending the render queue's wait for a paint, in milliseconds, or 0 when it is not
     /// waiting. A drain awaiting a paint normally gets one; this is for a window that does not paint, such as a
-    /// minimized one.
+    /// minimized one. A parked editor is not about to come back, and waiting logs keep waking the pump, so then
+    /// the pump waits a whole flush interval.
     /// </summary>
     private int PauseForRenderQueue()
     {
+        if (_renderQueue.IsEditorParked)
+            return _options.FlushIntervalMs;
         return _renderQueue.IsAwaitingPaint ? 1 : 0;
     }
 

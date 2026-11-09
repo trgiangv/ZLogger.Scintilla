@@ -32,6 +32,7 @@ internal sealed class RenderQueue
     private long _epoch;
     private int _drainPosted;
     private int _awaitingPaint;
+    private int _editorParked;
     private int _pumpBlocked;
     private int _trimPending;
     private volatile bool _closed;
@@ -74,6 +75,9 @@ internal sealed class RenderQueue
 
     /// <summary>True while the next drain waits for a paint.</summary>
     public bool IsAwaitingPaint => Volatile.Read(ref _awaitingPaint) != 0;
+
+    /// <summary>True when the last drain found the editor parked. See <see cref="LogScintillaControl.IsParked"/>.</summary>
+    public bool IsEditorParked => Volatile.Read(ref _editorParked) != 0;
 
     /// <summary>Lets the next drain run without a paint, for a window that does not paint, such as a minimized one.</summary>
     public void StopAwaitingPaint() => Volatile.Write(ref _awaitingPaint, 0);
@@ -178,7 +182,7 @@ internal sealed class RenderQueue
     {
         // Cleared before any work can throw, so that a failure cannot leave rendering stopped for good.
         Volatile.Write(ref _drainPosted, 0);
-        if (_closed)
+        if (_closed || HoldWhileParked())
             return;
 
         try
@@ -191,6 +195,20 @@ internal sealed class RenderQueue
         }
 
         ScheduleNext();
+    }
+
+    /// <summary>
+    /// An edit while the editor is parked would put ScintillaNET's line index out of step with the document.
+    /// The batches wait: the pump tries again on its next pass, and the first paint once the host shows the
+    /// editor again ends the wait.
+    /// </summary>
+    private bool HoldWhileParked()
+    {
+        var parked = _control.IsParked;
+        Volatile.Write(ref _editorParked, parked ? 1 : 0);
+        if (parked)
+            Volatile.Write(ref _awaitingPaint, 1);
+        return parked;
     }
 
     /// <summary>
@@ -314,6 +332,13 @@ internal sealed class RenderQueue
     {
         if (_closed)
             return;
+
+        // Waits like the drain does, and the pump asks again once it is idle.
+        if (_control.IsParked)
+        {
+            Volatile.Write(ref _trimPending, 1);
+            return;
+        }
 
         var overflow = GetOverflowLines();
         if (overflow <= 0)

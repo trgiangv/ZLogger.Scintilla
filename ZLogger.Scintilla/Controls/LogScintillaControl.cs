@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows.Forms;
+using ZLogger.Scintilla.Services;
 namespace ZLogger.Scintilla.Controls;
 
 /// <summary>
@@ -8,6 +9,7 @@ namespace ZLogger.Scintilla.Controls;
 /// </summary>
 internal sealed class LogScintillaControl : ScintillaNET.Scintilla
 {
+    private const int WmDestroy = 0x0002;
     private const int WmKeyDown = 0x0100;
     private const int WmVScroll = 0x0115;
     private const int WmMouseWheel = 0x020A;
@@ -15,6 +17,30 @@ internal sealed class LogScintillaControl : ScintillaNET.Scintilla
     private const int WmLButtonDblClk = 0x0203;
 
     public event EventHandler? UserScrolled;
+
+    /// <summary>The window ScintillaNET moved the editor under when its own window was destroyed.</summary>
+    private IntPtr _parkedUnder;
+
+    /// <summary>
+    /// True while the editor waits under a message-only window. When a host destroys the window holding the
+    /// editor, ScintillaNET keeps the editor alive there instead of destroying it. ScintillaNET also keeps its
+    /// own index of lines, updated by notifications that only a WinForms parent passes back to it; edits made
+    /// while parked are missed, and the next edit after the host gives the editor a window again reads past
+    /// the end of that index.
+    /// </summary>
+    public bool IsParked
+    {
+        get
+        {
+            if (_parkedUnder == IntPtr.Zero)
+                return false;
+            if (IsHandleCreated && NativeWindowsHelper.GetParent(Handle) == _parkedUnder)
+                return true;
+
+            _parkedUnder = IntPtr.Zero;
+            return false;
+        }
+    }
 
     /// <summary>
     /// True from the second press of a double click until the next press. The control's own
@@ -57,11 +83,35 @@ internal sealed class LogScintillaControl : ScintillaNET.Scintilla
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg is WmLButtonDown or WmLButtonDblClk)
-            IsInDoubleClick = m.Msg == WmLButtonDblClk;
+        switch (m.Msg)
+        {
+            case WmLButtonDown:
+            case WmLButtonDblClk:
+                IsInDoubleClick = m.Msg == WmLButtonDblClk;
+                base.WndProc(ref m);
+                break;
+            case WmDestroy:
+                WmDestroyMayPark(ref m);
+                break;
+            case WmVScroll:
+            case WmMouseWheel:
+            case WmKeyDown:
+                base.WndProc(ref m);
+                UserScrolled?.Invoke(this, EventArgs.Empty);
+                break;
+            default:
+                base.WndProc(ref m);
+                break;
+        }
+    }
 
+    /// <summary>A destroy that leaves the editor under another parent is ScintillaNET parking it.</summary>
+    private void WmDestroyMayPark(ref Message m)
+    {
+        var parentBefore = NativeWindowsHelper.GetParent(m.HWnd);
         base.WndProc(ref m);
-        if (m.Msg is WmVScroll or WmMouseWheel or WmKeyDown)
-            UserScrolled?.Invoke(this, EventArgs.Empty);
+        var parentAfter = NativeWindowsHelper.GetParent(m.HWnd);
+        if (parentAfter != parentBefore)
+            _parkedUnder = parentAfter;
     }
 }

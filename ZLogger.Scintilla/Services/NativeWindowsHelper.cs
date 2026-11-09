@@ -6,8 +6,12 @@ namespace ZLogger.Scintilla.Services;
 internal static partial class NativeWindowsHelper
 {
     private const string UxThemeDll = "uxtheme.dll";
+    private const string User32Dll = "user32.dll";
 
 #if NET8_0_OR_GREATER
+    [LibraryImport(User32Dll, EntryPoint = "GetParent")]
+    internal static partial IntPtr GetParent(IntPtr hWnd);
+
     [LibraryImport(UxThemeDll, EntryPoint = "SetWindowTheme", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     private static partial int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
 
@@ -17,6 +21,9 @@ internal static partial class NativeWindowsHelper
     [LibraryImport(UxThemeDll, EntryPoint = "#136", SetLastError = true)]
     private static partial void FlushMenuThemes();
 #else
+    [DllImport(User32Dll)]
+    internal static extern IntPtr GetParent(IntPtr hWnd);
+
     [DllImport(UxThemeDll, CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern int SetWindowTheme(IntPtr hWnd, string? pszSubAppName, string? pszSubIdList);
 

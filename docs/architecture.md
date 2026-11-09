@@ -322,7 +322,7 @@ ZLogger.Scintilla/
 |------|------|
 | `ScintillaLogProcessor` | ZLogger `IAsyncLogProcessor` entry point |
 | `BatchPump` | Pump thread: reads the channel, keeps the history, prepares batches, replays on a filter change, `Clear()` |
-| `RenderQueue` | UI thread: queue of prepared batches, document epoch, drain pacing, trim |
+| `RenderQueue` | UI thread: queue of prepared batches, document epoch, drain pacing, trim, holding back while the editor is parked |
 | `LogIngestChannel` | `BoundedChannel<LogEntry>` producer/consumer |
 | `LogHistoryBuffer` | Circular buffer; chunked snapshot for filter reapply |
 | `BatchPreparer` | Off-thread: entries → `PreparedBatch` (pooled arrays) |

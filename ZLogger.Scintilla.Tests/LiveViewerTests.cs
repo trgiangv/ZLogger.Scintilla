@@ -873,8 +873,54 @@ public sealed class LiveViewerTests
         Assert.IsLessThan(100, maxStall, $"Replay took {replay.ElapsedMilliseconds} ms with a UI stall of {maxStall:F1} ms.");
     }
 
+    /// <summary>
+    /// A host such as Revit can destroy the window holding the editor without WinForms. ScintillaNET then parks
+    /// the editor under a message-only window, where its line index misses every edit, and the first edit
+    /// after the editor gets a window again threw IndexOutOfRangeException from LineCollection.TrackInsertText.
+    /// </summary>
+    [TestMethod]
+    public void EditorParkedByTheHost_HoldsLogsAndShowsThemOnceBack()
+    {
+        using var live = new LiveViewer();
+        var uiExceptions = new List<Exception>();
+        var panel = live.Ui(() =>
+        {
+            Application.ThreadException += (_, e) => uiExceptions.Add(e.Exception);
+            var holder = new Panel { Dock = DockStyle.Fill };
+            live.Control.FindForm()!.Controls.Add(holder);
+            holder.Controls.Add(live.Control);
+            return holder;
+        });
+        live.Logger.LogInformation("before");
+        live.WaitForLine("before");
+
+        live.Ui(() => DestroyWindow(panel.Handle));
+        for (var i = 0; i < 100; i++)
+            live.Logger.LogInformation("parked {I}", i);
+
+        Assert.IsTrue(
+            live.WaitFor(() => live.Viewer is { PendingEntryCount: 0, RenderQueue.IsEditorParked: true }),
+            "The viewer never held the logs back while the editor was parked.");
+        Assert.AreEqual(1, live.LineCount(), "The document changed while the editor was parked.");
+
+        live.Ui(() => SetParent(live.Control.Handle, panel.Handle));
+        for (var i = 0; i < 100; i++)
+            live.Logger.LogInformation("back {I}", i);
+        live.WaitForLine("back 99");
+
+        Assert.AreEqual(201, live.LineCount());
+        Assert.AreEqual(live.LineCount() + 1, live.Ui(() => live.Control.Lines.Count), "ScintillaNET's line index is out of step.");
+        Assert.IsEmpty(uiExceptions, string.Join(Environment.NewLine, uiExceptions));
+    }
+
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")]
     private static extern IntPtr SendMessage(IntPtr hwnd, int message, nint wParam, nint lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool DestroyWindow(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SetParent(IntPtr child, IntPtr parent);
 
     private sealed class ThreadRecording
     {
