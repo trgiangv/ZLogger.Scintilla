@@ -127,15 +127,15 @@ internal sealed class LogRenderer
         if (prefix.Found)
         {
             bodyStart = prefix.PrefixByteLength;
-            LogPrefixParser.BuildPrefixSegments(prefix, line.Span.Slice(0, bodyStart), entry.Level, segments);
+            LogPrefixParser.BuildPrefixSegments(prefix, line.Span[..bodyStart], entry.Level, segments);
         }
 
-        var body = line.Span.Slice(bodyStart);
+        var body = line.Span[bodyStart..];
         _hits.Clear();
         CollectUrlHits(body);
         CollectParameterHits(body, entry);
         SortHitsByStart();
-        AppendBody(new RenderContext(line.Slice(bodyStart), entry), body, segments);
+        AppendBody(new RenderContext(line[bodyStart..], entry), body, segments);
     }
 
     /// <summary>Builds render segments for pre-formatted UTF-8 JSON (syntax highlighting only).</summary>
@@ -172,12 +172,12 @@ internal sealed class LogRenderer
             return;
 
         Span<byte> buffer = stackalloc byte[MaxStyledValueChars * 3];
-        var needle = buffer.Slice(0, Encoding.UTF8.GetBytes(value.AsSpan(), buffer));
+        var needle = buffer[..Encoding.UTF8.GetBytes(value.AsSpan(), buffer)];
 
         var position = 0;
         while (position <= body.Length - needle.Length)
         {
-            var found = body.Slice(position).IndexOf(needle);
+            var found = body[position..].IndexOf(needle);
             if (found < 0)
                 return;
 
@@ -211,6 +211,8 @@ internal sealed class LogRenderer
     private void AppendBody(in RenderContext context, ReadOnlySpan<byte> body, IList<RenderSegment> segments)
     {
         var cursor = 0;
+        // Runs for every message on the pump; LINQ would allocate.
+        // ReSharper disable once ForeachCanBePartlyConvertedToQueryUsingAnotherGetEnumerator
         foreach (var hit in _hits)
         {
             if (hit.Start < cursor)
@@ -221,7 +223,7 @@ internal sealed class LogRenderer
             cursor = hit.Start + hit.Segment.Utf8Length;
         }
 
-        AppendTokens(context, body.Slice(cursor), segments);
+        AppendTokens(context, body[cursor..], segments);
     }
 
     private void AppendTokens(in RenderContext context, ReadOnlySpan<byte> text, IList<RenderSegment> segments)
@@ -238,7 +240,7 @@ internal sealed class LogRenderer
         var cursor = 0;
         while (cursor < text.Length)
         {
-            var separator = RenderingChars.IndexOfTokenSeparator(text.Slice(cursor));
+            var separator = RenderingChars.IndexOfTokenSeparator(text[cursor..]);
             var tokenLength = separator < 0 ? text.Length - cursor : separator;
             if (tokenLength > 0)
                 segments.Add(ResolveToken(context, text.Slice(cursor, tokenLength)));

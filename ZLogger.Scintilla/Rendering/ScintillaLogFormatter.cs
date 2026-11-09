@@ -52,11 +52,11 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         WriteMessageBody(writer, entry, in info);
 
         var ex = info.Exception;
-        if (ex is not null)
-        {
-            writer.Write(NewLine);
-            WriteUtf8(writer, SafeExceptionText(ex).AsSpan());
-        }
+        if (ex is null)
+            return;
+
+        writer.Write(NewLine);
+        WriteUtf8(writer, SafeExceptionText(ex).AsSpan());
     }
 
     /// <summary>Writes the line for an entry whose formatting failed, so that the entry is not lost.</summary>
@@ -75,16 +75,16 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         var span = writer.GetSpan(length);
 
         span[0] = (byte)'[';
-        WriteLocalTime(span.Slice(1), info.Timestamp.Utc);
+        WriteLocalTime(span[1..], info.Timestamp.Utc);
         span[9] = (byte)' ';
-        GetLevelAbbreviation(info.LogLevel).CopyTo(span.Slice(10));
+        GetLevelAbbreviation(info.LogLevel).CopyTo(span[10..]);
         span[13] = (byte)']';
         span[14] = (byte)' ';
 
         if (!category.IsEmpty)
         {
             span[15] = (byte)'[';
-            category.CopyTo(span.Slice(16));
+            category.CopyTo(span[16..]);
             span[16 + category.Length] = (byte)']';
             span[17 + category.Length] = (byte)' ';
         }
@@ -286,15 +286,16 @@ internal sealed class ScintillaLogFormatter : IZLoggerFormatter
         var specifierAt = hole.IndexOf(specifierMark);
 
         if (specifierAt >= 0 && specifierAt + 1 < hole.Length)
-            specifier = hole.Substring(specifierAt + 1);
+            specifier = hole[(specifierAt + 1)..];
 
         // A template specifier can contain the alignment mark, so only an earlier one counts.
-        if (alignmentAt >= 0 && (specifierAt < 0 || alignmentAt < specifierAt))
-        {
-            var end = specifierAt > alignmentAt ? specifierAt : hole.Length;
-            if (int.TryParse(hole.Substring(alignmentAt + 1, end - alignmentAt - 1), out var parsed))
-                alignment = parsed;
-        }
+        var hasAlignment = alignmentAt >= 0 && (specifierAt < 0 || alignmentAt < specifierAt);
+        if (!hasAlignment)
+            return;
+
+        var end = specifierAt > alignmentAt ? specifierAt : hole.Length;
+        if (int.TryParse(hole.AsSpan(alignmentAt + 1, end - alignmentAt - 1), out var parsed))
+            alignment = parsed;
     }
 
     private static void WriteAligned(IBufferWriter<byte> writer, string text, int alignment)

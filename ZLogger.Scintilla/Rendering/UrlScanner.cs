@@ -52,14 +52,12 @@ internal static class UrlScanner
             return true;
         }
 
-        if (trimmed.StartsWith("www.", StringComparison.OrdinalIgnoreCase) &&
-            Uri.TryCreate("https://" + trimmed, UriKind.Absolute, out var wwwUri))
-        {
-            targetUri = wwwUri.AbsoluteUri;
-            return true;
-        }
+        if (!trimmed.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
+            !Uri.TryCreate("https://" + trimmed, UriKind.Absolute, out var wwwUri))
+            return false;
 
-        return false;
+        targetUri = wwwUri.AbsoluteUri;
+        return true;
     }
 
     /// <summary>
@@ -95,7 +93,7 @@ internal static class UrlScanner
         var search = from;
         while (search < text.Length)
         {
-            var found = text.Slice(search).IndexOf("://"u8);
+            var found = text[search..].IndexOf("://"u8);
             if (found < 0)
                 return -1;
 
@@ -118,7 +116,7 @@ internal static class UrlScanner
         var search = from;
         while (search < text.Length)
         {
-            var found = text.Slice(search).IndexOf("www."u8);
+            var found = text[search..].IndexOf("www."u8);
             if (found < 0)
                 return -1;
 

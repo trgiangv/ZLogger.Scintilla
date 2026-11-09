@@ -20,16 +20,21 @@ internal sealed class JsonSyntaxHighlighter
     private int AppendToken(ReadOnlySpan<byte> text, int index, IList<RenderSegment> segments)
     {
         var value = text[index];
+        switch (value)
+        {
+            case (byte)'{' or (byte)'}' or (byte)'[' or (byte)']' or (byte)',' or (byte)':':
+                return AppendOne(index, SemanticStyle.Punctuation, segments);
+            case (byte)'"':
+                return AppendQuoted(text, index, segments);
+            case (byte)'-':
+                return AppendRun(text, index, IsNumberByte, SemanticStyle.JsonNumber, segments);
+        }
+
         if (IsWhitespace(value))
             return AppendRun(text, index, IsWhitespace, SemanticStyle.SecondaryText, segments);
-        if (value is (byte)'{' or (byte)'}' or (byte)'[' or (byte)']' or (byte)',' or (byte)':')
-            return AppendOne(index, SemanticStyle.Punctuation, segments);
-        if (value == (byte)'"')
-            return AppendQuoted(text, index, segments);
-        if (RenderingChars.IsAsciiDigit(value) || value == (byte)'-')
-            return AppendRun(text, index, IsNumberByte, SemanticStyle.JsonNumber, segments);
-
-        return AppendKeyword(text, index, segments);
+        return RenderingChars.IsAsciiDigit(value)
+            ? AppendRun(text, index, IsNumberByte, SemanticStyle.JsonNumber, segments)
+            : AppendKeyword(text, index, segments);
     }
 
     private static int AppendKeyword(ReadOnlySpan<byte> text, int index, IList<RenderSegment> segments)
@@ -39,10 +44,9 @@ internal sealed class JsonSyntaxHighlighter
             return AppendKeyword(index, 4, SemanticStyle.JsonBoolean, segments);
         if (rest.StartsWith("false"u8))
             return AppendKeyword(index, 5, SemanticStyle.JsonBoolean, segments);
-        if (rest.StartsWith("null"u8))
-            return AppendKeyword(index, 4, SemanticStyle.JsonNull, segments);
-
-        return AppendOne(index, SemanticStyle.Text, segments);
+        return rest.StartsWith("null"u8)
+            ? AppendKeyword(index, 4, SemanticStyle.JsonNull, segments)
+            : AppendOne(index, SemanticStyle.Text, segments);
     }
 
     private static int AppendKeyword(int index, int length, SemanticStyle style, IList<RenderSegment> segments)

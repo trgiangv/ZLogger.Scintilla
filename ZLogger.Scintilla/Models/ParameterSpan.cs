@@ -41,6 +41,8 @@ public readonly struct ParameterSpan
         if (context.ParameterSpans is not { } spans)
             return false;
 
+        // A linkifier calls this for every token; LINQ would allocate a closure each time.
+        // ReSharper disable once LoopCanBeConvertedToQuery
         foreach (var span in spans)
         {
             if (span.ClrType?.FullName == clrTypeFullName &&
