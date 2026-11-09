@@ -62,7 +62,6 @@ internal static class StackBench
         var allocated = GC.GetTotalAllocatedBytes();
         var contexts = Enumerable.Range(0, 64).Select(i => string.Join(' ', Enumerable.Range(0, i).Select(k => "k" + k))).ToArray();
         var total = burst ? BurstMessages : SustainedRate * SustainedSeconds;
-        void Log(int i) => stack.Log(i, i % 1500, "10.0.0.1", contexts[i % contexts.Length]);
 
         var freeze = new FreezeMeter(form);
         var paintsBefore = form.Invoke(() => stack.Paints);
@@ -101,6 +100,9 @@ internal static class StackBench
             Harness.Emit("page_up_ms", Median(20, stack.PageUp));
         });
         Environment.Exit(0);
+        return;
+
+        void Log(int i) => stack.Log(i, i % 1500, "10.0.0.1", contexts[i % contexts.Length]);
     }
 
     /// <summary>How long one line takes to appear when nothing else is happening, the case a person watches most.</summary>

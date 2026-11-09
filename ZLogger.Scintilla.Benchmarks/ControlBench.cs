@@ -112,7 +112,9 @@ internal static class ControlBench
         var position = -1;
         Harness.Emit($"{name}_ms", Median(count, () => position = find(token)));
         Harness.Emit($"{name}_alloc_kb", (GC.GetAllocatedBytesForCurrentThread() - before) / 1024.0 / count);
-        if (token == Absent != (position < 0))
+        var tokenAbsent = token == Absent;
+        var positionAbsent = position < 0;
+        if (tokenAbsent != positionAbsent)
             Harness.Emit($"check_{name}_WRONG", 1);
     }
 
@@ -227,8 +229,8 @@ internal static class ControlBench
         {
             _control.CreateControl();
             Native.SendMessage(_control.Handle, Native.EmSetUndoLimit, IntPtr.Zero, IntPtr.Zero);
-            var colors = string.Concat(Levels.Select(l => $"\\red{l.Color.R}\\green{l.Color.G}\\blue{l.Color.B};"));
-            _header = "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Cascadia Mono;}}{\\colortbl;" + colors + "}\\f0\\fs20 ";
+            var colors = string.Concat(Levels.Select(l => $@"\red{l.Color.R}\green{l.Color.G}\blue{l.Color.B};"));
+            _header = @"{\rtf1\ansi\deff0{\fonttbl{\f0 Cascadia Mono;}}{\colortbl;" + colors + @"}\f0\fs20 ";
         }
 
         public Control Control => _control;

@@ -23,11 +23,10 @@ internal static class Harness
                 runs[variant].Add(values);
                 foreach (var key in values.Keys.Where(k => !metrics.Contains(k)))
                     metrics.Add(key);
-                if (!ok)
-                {
-                    failures++;
-                    Console.WriteLine($"FAILED: {suite} {variant} run {rep + 1} (partial results kept)");
-                }
+                if (ok)
+                    continue;
+                failures++;
+                Console.WriteLine($"FAILED: {suite} {variant} run {rep + 1} (partial results kept)");
             }
         }
 
@@ -51,8 +50,9 @@ internal static class Harness
         process.OutputDataReceived += (_, e) =>
         {
             var parts = e.Data?.Split('=');
-            if (parts is { Length: 2 } && double.TryParse(parts[1], CultureInfo.InvariantCulture, out var value))
-                lock (values) values[parts[0]] = value;
+            if (parts is not { Length: 2 } || !double.TryParse(parts[1], CultureInfo.InvariantCulture, out var value))
+                return;
+            lock (values) values[parts[0]] = value;
         };
         process.Start();
         process.BeginOutputReadLine();
