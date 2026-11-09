@@ -13,7 +13,7 @@
 
     <PropertyGroup>
         <PackageId>ZLogger.Scintilla</PackageId>
-        <Version>0.1.0</Version>
+        <Version>0.1.1</Version>
         <Authors>trgiangv</Authors>
         <Description>Log viewer control for WinForms and WPF that shows ZLogger output color-coded, with level filtering, search, clickable links and pretty-printed JSON. Built on Scintilla.</Description>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>

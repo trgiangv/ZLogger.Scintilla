@@ -4,6 +4,14 @@ All notable changes to ZLogger.Scintilla are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-11-09
+
+### Changed
+- Locks are plain objects on every target again, instead of `System.Threading.Lock` on .NET 9 and later
+
+### Fixed
+- `IndexOutOfRangeException` from ScintillaNET's `LineCollection.TrackInsertText` after a host such as Revit destroyed the window holding the viewer and later gave it one again. ScintillaNET keeps the editor under a message-only window meanwhile, where its line index misses every edit. Logs now wait while the editor is there, and appear once it is back
+
 ## [0.1.0] - 2026-11-08
 
 Whole-library correction. Rendering, the UI drain, scrolling, search and clicks now have tests on real windows with a running message loop, run on both `net48` and `net8.0-windows`. Benchmark figures in the entries below this one came from a suite that rendered nothing, and are withdrawn. See [docs/benchmarks.md](docs/benchmarks.md).
